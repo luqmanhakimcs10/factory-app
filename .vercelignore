@@ -1,0 +1,5 @@
+# Nothing here is needed to build the web bundle, and the SQL in supabase/
+# includes seed data — keep it off the build machine.
+supabase/
+.expo/
+dist/

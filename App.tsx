@@ -1,20 +1,37 @@
+import { useCallback, useEffect, useState } from 'react';
+import { View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import { useFonts } from 'expo-font';
+import * as SplashScreen from 'expo-splash-screen';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+
+import { RootNavigator } from './src/navigation/RootNavigator';
+import { colors, fontAssets } from './src/theme';
+
+// Hold the splash screen until the three IBM Plex families are in memory —
+// otherwise the first frame renders in the system font and visibly reflows.
+void SplashScreen.preventAutoHideAsync();
 
 export default function App() {
+  const [fontsLoaded, fontError] = useFonts(fontAssets);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    if (fontsLoaded || fontError) setReady(true);
+  }, [fontsLoaded, fontError]);
+
+  const onLayout = useCallback(() => {
+    if (ready) void SplashScreen.hideAsync();
+  }, [ready]);
+
+  if (!ready) return null;
+
   return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    <SafeAreaProvider>
+      <View style={{ flex: 1, backgroundColor: colors.bg }} onLayout={onLayout}>
+        <StatusBar style="dark" />
+        <RootNavigator />
+      </View>
+    </SafeAreaProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
