@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
@@ -31,10 +31,15 @@ export function StoreManagerHomeScreen({ navigation }: Props) {
 
   // Only the PO tab carries a badge, so its count is fetched here rather than
   // inside the tab that may not be mounted.
-  const poFetcher = useQuery(
+  //
+  // The fetcher has to be memoized: `useQuery` keys its focus effect on the
+  // function's identity, so an inline arrow re-fires the fetch on every render
+  // it causes — a refetch loop for as long as this screen is focused.
+  const listPos = useCallback(
     () => listPurchaseOrders(factoryId as string),
-    Boolean(factoryId),
+    [factoryId],
   );
+  const poFetcher = useQuery(listPos, Boolean(factoryId));
   const openPoCount = (poFetcher.data ?? []).filter(isOpenPo).length;
 
   const tabs: TabDef<StoreTab>[] = [

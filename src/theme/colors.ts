@@ -15,6 +15,8 @@ export const colors = {
   borderSubtle: '#EDEEEC',
   /** Draft status pill background. */
   draftBg: '#EDEEEC',
+  /** Square icon-button surface in the home header (the notifications bell). */
+  controlBg: '#F4F5F3',
 
   /** Primary text. */
   textPrimary: '#1A2027',

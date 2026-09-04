@@ -10,7 +10,15 @@ import {
   type ApprovalStatus,
   type RejectReason,
 } from '../../data/rejectReasons';
-import { formatRs } from '../../lib/ledgerMath';
+import {
+  currentMonthLabel,
+  currentMonthStartIso,
+  currentMonthStats,
+  currentPeriod,
+  formatRs,
+  isThisMonth,
+  type CurrentMonthStats,
+} from '../../lib/ledgerMath';
 import type { ApprovableType } from '../../lib/approvalMutations';
 
 /**
@@ -200,30 +208,165 @@ export async function listApprovals(factoryId: string): Promise<ApprovalItem[]> 
 
 export interface AdminSummary {
   pending: ApprovalItem[];
-  clientCount: number;
+  /** Live profit and loss for the current month. */
+  pnl: CurrentMonthStats;
+  monthLabel: string;
+  bonusSlabCount: number;
   employeeCount: number;
+  finishingPartnerCount: number;
+  supplierCount: number;
+  clientCount: number;
 }
 
-async function countRows(table: string, factoryId: string): Promise<number> {
-  const { count, error } = await supabase
+/**
+ * How many rows a factory has in one of the master-data rosters.
+ *
+ * `head: true` asks PostgREST for the count header and no body, so a roster of
+ * any size costs the same as an empty one.
+ */
+async function countRows(
+  table: string,
+  factoryId: string,
+  activeOnly = true,
+): Promise<number> {
+  let query = supabase
     .from(table)
     .select('id', { count: 'exact', head: true })
     .eq('factory_id', factoryId);
 
+  // The dashboard counts people and companies the factory currently works
+  // with. An inactive supplier is history, not a roster entry, and counting it
+  // would make the card disagree with the list it opens.
+  if (activeOnly) query = query.eq('status', 'active');
+
+  const { count, error } = await query;
   if (error) throw error;
   return count ?? 0;
 }
 
+/**
+ * The current month's profit and loss, recomputed from live rows.
+ *
+ * A read-only mirror of what the Accountant's Stats tab shows, through the same
+ * `currentMonthStats` in `lib/ledgerMath.ts`. `monthly_history` is deliberately
+ * not consulted: that table holds closed months, and this one is open.
+ *
+ * `invoice_payments` and `po_payments` carry no `factory_id` of their own, so
+ * both are scoped through an inner join on their parent — the same boundary
+ * every RLS policy on those tables uses.
+ */
+async function getCurrentMonthPnl(factoryId: string): Promise<CurrentMonthStats> {
+  const since = currentMonthStartIso();
+
+  const [invoicePayments, billPayments, salaries, loans, expenses] =
+    await Promise.all([
+      supabase
+        .from('invoice_payments')
+        .select('amount, paid_at, orders!inner(factory_id)')
+        .eq('orders.factory_id', factoryId)
+        .gte('paid_at', since),
+      supabase
+        .from('po_payments')
+        .select('amount, paid_at, purchase_orders!inner(factory_id)')
+        .eq('purchase_orders.factory_id', factoryId)
+        .gte('paid_at', since),
+      supabase
+        .from('salary_records')
+        .select('person_id, base_pay, bonus, damage_deduction, leave_deduction')
+        .eq('factory_id', factoryId)
+        .eq('period', currentPeriod())
+        .eq('paid', true),
+      supabase
+        .from('loans')
+        .select('id, worker_id, principal, installment, status, loan_history(amount)')
+        .eq('factory_id', factoryId),
+      supabase
+        .from('expenses')
+        .select('amount, submitted_at')
+        .eq('factory_id', factoryId)
+        .eq('status', 'approved')
+        .gte('submitted_at', since),
+    ]);
+
+  for (const result of [invoicePayments, billPayments, salaries, loans, expenses]) {
+    if (result.error) throw result.error;
+  }
+
+  const money = z.object({ amount: z.number() });
+  const dated = z.object({ amount: z.number(), paid_at: z.string() });
+
+  return currentMonthStats({
+    // `since` is a UTC instant while `isThisMonth` reads the local calendar, so
+    // the boundary rows the filter lets through are re-checked here rather than
+    // trusted — the two disagree for a few hours either side of the 1st.
+    invoicePayments: z
+      .array(dated)
+      .parse(invoicePayments.data)
+      .filter((row) => isThisMonth(row.paid_at)),
+    billPayments: z
+      .array(dated)
+      .parse(billPayments.data)
+      .filter((row) => isThisMonth(row.paid_at)),
+    paidSalaries: z
+      .array(
+        z.object({
+          person_id: uuid(),
+          base_pay: z.number(),
+          bonus: z.number(),
+          damage_deduction: z.number(),
+          leave_deduction: z.number(),
+        }),
+      )
+      .parse(salaries.data),
+    loans: z
+      .array(
+        z.object({
+          id: uuid(),
+          worker_id: uuid(),
+          principal: z.number(),
+          installment: z.number(),
+          status: z.enum(APPROVAL_STATUSES),
+          loan_history: z.array(money),
+        }),
+      )
+      .parse(loans.data)
+      .map((row) => ({ ...row, history: row.loan_history })),
+    approvedExpenses: z
+      .array(z.object({ amount: z.number(), submitted_at: z.string() }))
+      .parse(expenses.data)
+      .filter((row) => isThisMonth(row.submitted_at)),
+  });
+}
+
 export async function getAdminSummary(factoryId: string): Promise<AdminSummary> {
-  const [approvals, clientCount, employeeCount] = await Promise.all([
+  const [
+    approvals,
+    pnl,
+    bonusSlabCount,
+    employeeCount,
+    finishingPartnerCount,
+    supplierCount,
+    clientCount,
+  ] = await Promise.all([
     listApprovals(factoryId),
-    countRows('clients', factoryId),
+    getCurrentMonthPnl(factoryId),
+    // `bonus_slabs` has no status column — a slab is either configured or it
+    // does not exist, so every row counts.
+    countRows('bonus_slabs', factoryId, false),
     countRows('employees', factoryId),
+    countRows('finishing_partners', factoryId),
+    countRows('suppliers', factoryId),
+    countRows('clients', factoryId),
   ]);
 
   return {
     pending: approvals.filter((item) => item.status === 'pending'),
-    clientCount,
+    pnl,
+    monthLabel: currentMonthLabel(),
+    bonusSlabCount,
     employeeCount,
+    finishingPartnerCount,
+    supplierCount,
+    clientCount,
   };
 }

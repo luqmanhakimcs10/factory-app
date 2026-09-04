@@ -6,7 +6,9 @@ import { colors, spacing, type } from '../../../theme';
 import { expenseCategoryLabel } from '../../../data/expenseCategories';
 import {
   currentMonthStats,
+  currentPeriod,
   formatRs,
+  isThisMonth,
   monthExpensesByCategoryTotal,
   netFor,
   totalExpensesFor,
@@ -35,19 +37,6 @@ const SOURCE_LABELS: Record<Source, string> = {
   salary: 'Salary',
   expenses: 'Expenses',
 };
-
-/** Whether an ISO timestamp falls in the current calendar month. */
-function isThisMonth(iso: string): boolean {
-  const date = new Date(iso);
-  const now = new Date();
-  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
-}
-
-/** 'YYYY-MM' for the current month, matching `salary_records.period`. */
-function currentPeriod(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-}
 
 export function StatsTab({
   months,

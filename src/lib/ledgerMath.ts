@@ -181,6 +181,30 @@ export function netFor(month: MonthLike): number {
  * repayment is its own ledger, not profit and loss. Do not fold loan cash flow
  * into any of these totals.
  */
+/** Whether an ISO timestamp falls in the current calendar month, locally. */
+export function isThisMonth(iso: string): boolean {
+  const date = new Date(iso);
+  const now = new Date();
+  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+}
+
+/** 'YYYY-MM' for the current month, matching `salary_records.period`. */
+export function currentPeriod(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** First instant of the current month, as an ISO string for a `gte` filter. */
+export function currentMonthStartIso(): string {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+}
+
+/** 'Aug 2026' — the same shape `monthly_history.month_label` stores. */
+export function currentMonthLabel(): string {
+  return new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+}
+
 export interface CurrentMonthInput {
   /** Invoice payments received this month. */
   invoicePayments: { amount: number }[];

@@ -11,6 +11,7 @@ import { IBMPlexSansCondensed_600SemiBold } from '@expo-google-fonts/ibm-plex-sa
 import { IBMPlexSansCondensed_700Bold } from '@expo-google-fonts/ibm-plex-sans-condensed/700Bold';
 import { IBMPlexMono_500Medium } from '@expo-google-fonts/ibm-plex-mono/500Medium';
 import { IBMPlexMono_600SemiBold } from '@expo-google-fonts/ibm-plex-mono/600SemiBold';
+import { IBMPlexMono_700Bold } from '@expo-google-fonts/ibm-plex-mono/700Bold';
 
 import { colors } from './colors';
 
@@ -27,6 +28,7 @@ export const fontAssets = {
   IBMPlexSansCondensed_700Bold,
   IBMPlexMono_500Medium,
   IBMPlexMono_600SemiBold,
+  IBMPlexMono_700Bold,
 };
 
 /**
@@ -54,6 +56,8 @@ export const fonts = {
   mono: {
     medium: 'IBMPlexMono_500Medium',
     semibold: 'IBMPlexMono_600SemiBold',
+    /** Dashboard counts and P&L figures — the mockup specifies weight 700. */
+    bold: 'IBMPlexMono_700Bold',
   },
 } as const;
 
