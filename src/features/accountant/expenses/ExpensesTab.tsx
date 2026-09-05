@@ -2,13 +2,18 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Feather from '@expo/vector-icons/Feather';
 
-import { EmptyState, StatusPill, approvalPill } from '../../../components';
+import {
+  EmptyState,
+  FilterChips,
+  StatusPill,
+  approvalPill,
+  distinct,
+} from '../../../components';
 import { colors, layout, radius, spacing, type } from '../../../theme';
 import { expenseCategoryLabel } from '../../../data/expenseCategories';
 import { recurringLabel } from '../../../data/recurringTypes';
 import { approvalStatusLabel } from '../../../data/rejectReasons';
 import { formatRs } from '../../../lib/ledgerMath';
-import { FilterChips, distinct } from '../FilterChips';
 import type { Expense } from '../api';
 
 export interface ExpensesTabProps {

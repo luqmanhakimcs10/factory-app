@@ -1,10 +1,14 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { EmptyState, StatusPill } from '../../../components';
+import {
+  EmptyState,
+  FilterChips,
+  StatusPill,
+  distinct,
+} from '../../../components';
 import { colors, layout, radius, spacing, type } from '../../../theme';
 import { formatRs, netPayFor, type LoanLike } from '../../../lib/ledgerMath';
-import { FilterChips, distinct } from '../FilterChips';
 import type { SalaryRecord } from '../api';
 
 export interface SalaryTabProps {

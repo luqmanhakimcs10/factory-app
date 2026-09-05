@@ -10,7 +10,13 @@ import Feather from '@expo/vector-icons/Feather';
 
 import { colors, layout, radius, spacing, type } from '../theme';
 
-export type ButtonTone = 'primary' | 'secondary' | 'ghost' | 'danger';
+export type ButtonTone =
+  | 'primary'
+  | 'secondary'
+  /** Navy rule and navy label on white — the "+ Add ..." roster button. */
+  | 'outline'
+  | 'ghost'
+  | 'danger';
 
 export interface ButtonProps {
   label: string;
@@ -69,6 +75,7 @@ export function Button({
 const TONES: Record<ButtonTone, { bg: string; fg: string; border: string }> = {
   primary: { bg: colors.primary, fg: colors.surface, border: colors.primary },
   secondary: { bg: colors.surface, fg: colors.textPrimary, border: colors.border },
+  outline: { bg: colors.surface, fg: colors.primary, border: colors.primary },
   ghost: { bg: 'transparent', fg: colors.textSecondary, border: 'transparent' },
   danger: { bg: colors.danger, fg: colors.surface, border: colors.danger },
 };

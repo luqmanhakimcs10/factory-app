@@ -255,7 +255,9 @@ async function countRows(
  * both are scoped through an inner join on their parent — the same boundary
  * every RLS policy on those tables uses.
  */
-async function getCurrentMonthPnl(factoryId: string): Promise<CurrentMonthStats> {
+export async function getCurrentMonthPnl(
+  factoryId: string,
+): Promise<CurrentMonthStats> {
   const since = currentMonthStartIso();
 
   const [invoicePayments, billPayments, salaries, loans, expenses] =

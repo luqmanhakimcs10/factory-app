@@ -13,15 +13,29 @@ export interface TabRowProps<K extends string> {
   tabs: readonly TabDef<K>[];
   activeKey: K;
   onChange: (key: K) => void;
+  /**
+   * Leave the platform's own scroll indicator visible.
+   *
+   * On by default nowhere: a row of two or three tabs fits, and an indicator
+   * under it is chrome for a scroll that never happens. Reports Hub's five
+   * tabs do overflow, and the source mockup shows the browser's arrows and
+   * thumb under them — that is the hint that there is more to the right.
+   */
+  showScrollHint?: boolean;
 }
 
 /** Horizontally scrollable pill tabs with optional count badges. */
-export function TabRow<K extends string>({ tabs, activeKey, onChange }: TabRowProps<K>) {
+export function TabRow<K extends string>({
+  tabs,
+  activeKey,
+  onChange,
+  showScrollHint = false,
+}: TabRowProps<K>) {
   return (
     <View style={styles.wrapper}>
       <ScrollView
         horizontal
-        showsHorizontalScrollIndicator={false}
+        showsHorizontalScrollIndicator={showScrollHint}
         contentContainerStyle={styles.row}
       >
         {tabs.map((tab) => {

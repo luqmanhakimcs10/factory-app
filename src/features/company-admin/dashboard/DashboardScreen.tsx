@@ -17,8 +17,14 @@ type Props = NativeStackScreenProps<CompanyAdminStackParamList, 'Dashboard'>;
  *
  * The P&L card is read-only by design. It reflects the Accountant's Ledgers —
  * nothing on it is tappable, and nothing here writes money. The grid below is
- * seven single-tap destinations; the icon-square colours cycle blue / green /
- * amber purely for rhythm and mean nothing about status.
+ * seven single-tap destinations, all of them now built; the icon-square colours
+ * cycle blue / green / amber purely for rhythm and mean nothing about status.
+ *
+ * The header is the one screen in this module with no Home button — this is
+ * home — and no plain sign-out glyph either. `showSignOut={false}` swaps that
+ * for the profile button, which is where the sign-out action lives on this
+ * screen; every other screen in the module carries both through the shared
+ * `bar` header.
  *
  * Employees, Finishing Partners and Suppliers get three separate cards because
  * they are three separate tables with different columns — an employee has a
@@ -124,12 +130,7 @@ export function CompanyAdminDashboardScreen({ navigation }: Props) {
               title="Reports Hub"
               subLabel="P&L, per-order profitability, leakage, productivity, uptime"
               tone="success"
-              onPress={() =>
-                comingSoon(
-                  'Reports Hub',
-                  'The five report tabs are specified but not built yet.',
-                )
-              }
+              onPress={() => navigation.navigate('Reports')}
             />
             <DashCard
               icon="layers"
@@ -137,14 +138,14 @@ export function CompanyAdminDashboardScreen({ navigation }: Props) {
               title="Bonus Slab Config"
               subLabel="Daily-stitch threshold → bonus amount"
               tone="warning"
-              onPress={() => comingSoon('Bonus Slab Config')}
+              onPress={() => navigation.navigate('BonusSlabs')}
             />
             <DashCard
               icon="users"
               count={data.employeeCount}
               title="Employees"
               subLabel="Roster — name, role, contact"
-              onPress={() => comingSoon('Employees')}
+              onPress={() => navigation.navigate('Employees')}
             />
             <DashCard
               icon="scissors"
@@ -152,7 +153,7 @@ export function CompanyAdminDashboardScreen({ navigation }: Props) {
               title="Finishing Partners"
               subLabel="External roster — Clipping, Piko, Press"
               tone="success"
-              onPress={() => comingSoon('Finishing Partners')}
+              onPress={() => navigation.navigate('FinishingPartners')}
             />
             <DashCard
               icon="truck"
@@ -160,14 +161,14 @@ export function CompanyAdminDashboardScreen({ navigation }: Props) {
               title="Suppliers"
               subLabel="Who the factory buys inventory from"
               tone="warning"
-              onPress={() => comingSoon('Suppliers')}
+              onPress={() => navigation.navigate('Suppliers')}
             />
             <DashCard
               icon="briefcase"
               count={data.clientCount}
               title="Clients"
               subLabel="Who the factory bills — billing type, rate"
-              onPress={() => comingSoon('Clients')}
+              onPress={() => navigation.navigate('Clients')}
             />
           </View>
         </ScrollView>

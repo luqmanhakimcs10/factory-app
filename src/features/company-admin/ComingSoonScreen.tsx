@@ -8,12 +8,12 @@ import type { CompanyAdminStackParamList } from '../../navigation/CompanyAdminSt
 type Props = NativeStackScreenProps<CompanyAdminStackParamList, 'ComingSoon'>;
 
 /**
- * The rosters this role owns but has no specced form for yet.
+ * The one destination in this module with nothing behind it: the bell.
  *
- * `0010_company_admin.sql` created `employees`, `finishing_partners`,
- * `suppliers` and `bonus_slabs` and gave company_admin write on all four, but a
- * write grant is not a screen design. Landing here names the destination
- * honestly instead of guessing at a form nobody has drawn.
+ * It used to catch the five unbuilt roster and report screens as well. Those
+ * are built, so the only caller left is the dashboard's notifications button —
+ * there is no notifications table for it to count, and saying so is more honest
+ * than a bell that silently does nothing.
  */
 export function CompanyAdminComingSoonScreen({ navigation, route }: Props) {
   const { title, note } = route.params;

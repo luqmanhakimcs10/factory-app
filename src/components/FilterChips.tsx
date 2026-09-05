@@ -1,6 +1,6 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { colors, layout, radius, spacing, type } from '../../theme';
+import { colors, layout, radius, spacing, type } from '../theme';
 
 export interface FilterChipsProps {
   label: string;
@@ -17,7 +17,14 @@ export interface FilterChipsProps {
   allLabel?: string;
 }
 
-/** Generic single-select chip row, used by every filter in this module. */
+/**
+ * Generic single-select chip row, used by every filter in the Accountant and
+ * Company Admin modules.
+ *
+ * Shared rather than per-module: Reports Hub filters by month, audit date and
+ * worker name with exactly the row the Accountant's six tabs already use, and a
+ * second copy is how two filter rows end up with two selected-chip treatments.
+ */
 export function FilterChips({
   label,
   values,

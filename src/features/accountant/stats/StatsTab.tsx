@@ -1,7 +1,13 @@
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { Card, ChartArea, InvoiceRow, StatPair } from '../../../components';
+import {
+  Card,
+  ChartArea,
+  FilterChips,
+  InvoiceRow,
+  StatPair,
+} from '../../../components';
 import { colors, spacing, type } from '../../../theme';
 import { expenseCategoryLabel } from '../../../data/expenseCategories';
 import {
@@ -14,7 +20,6 @@ import {
   totalExpensesFor,
   type LoanLike,
 } from '../../../lib/ledgerMath';
-import { FilterChips } from '../FilterChips';
 import type { Bill, Expense, Invoice, MonthRow, SalaryRecord } from '../api';
 
 export interface StatsTabProps {

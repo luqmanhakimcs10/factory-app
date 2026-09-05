@@ -16,13 +16,14 @@ interface HomeTopBarProps {
   /** Unread count for the bell badge. Zero or undefined renders no badge. */
   notificationCount?: number;
   /**
-   * Drop the sign-out button from this root.
+   * Swap the plain sign-out button for a profile/settings one.
    *
-   * Only pass `false` from a module whose every sub-screen is one tap away and
-   * carries the `bar` header — that is what keeps sign-out reachable. It exists
-   * because the dashboard mockup puts the bell alone on the right and treats
-   * sign-out as belonging to a settings surface; until that surface exists,
-   * the sub-screen headers are the fallback.
+   * The dashboard mockup puts the bell alone on the right and treats sign-out
+   * as belonging to a settings surface. Passing `false` honours that without
+   * stranding the action: the log-out glyph goes, and a profile button takes
+   * its place whose only action today is the same sign-out confirmation. Do
+   * not pass `false` expecting nothing on the right — that is what let sign-out
+   * go missing from four modules twice.
    */
   showSignOut?: boolean;
 }
@@ -84,7 +85,7 @@ export function TopBar(props: TopBarProps) {
                 onPress={props.onPressNotifications}
               />
             ) : null}
-            {props.showSignOut === false ? null : <SignOutButton />}
+            {props.showSignOut === false ? <ProfileButton /> : <SignOutButton />}
           </>
         ) : (
           <>
@@ -179,6 +180,28 @@ function NotificationBell({
           <Text style={styles.badgeText}>{unread > 99 ? '99+' : unread}</Text>
         </View>
       ) : null}
+    </Pressable>
+  );
+}
+
+/**
+ * The dashboard's settings surface, as far as one exists.
+ *
+ * A distinct glyph from the bell beside it, and a distinct one from the plain
+ * log-out button every `bar` header carries — this is a profile entry point
+ * that happens to have exactly one action in it. When a real settings screen
+ * arrives this button opens that instead, and nothing else moves.
+ */
+function ProfileButton() {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Profile and sign out"
+      hitSlop={10}
+      onPress={confirmSignOut}
+      style={styles.iconButton}
+    >
+      <Feather name="user" size={20} color={colors.textSecondary} />
     </Pressable>
   );
 }

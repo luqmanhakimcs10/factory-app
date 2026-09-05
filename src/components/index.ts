@@ -4,6 +4,8 @@ export { Card } from './Card';
 export type { CardProps, CardTone } from './Card';
 export { ColorSwatch } from './ColorSwatch';
 export type { ColorSwatchProps } from './ColorSwatch';
+export { FilterChips, distinct, dayOf, formatDay } from './FilterChips';
+export type { FilterChipsProps } from './FilterChips';
 export { EmptyState } from './EmptyState';
 export type { EmptyStateProps } from './EmptyState';
 export { InfoRow } from './InfoRow';

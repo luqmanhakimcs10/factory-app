@@ -1,10 +1,17 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { EmptyState, SourceTag, StatusPill } from '../../../components';
+import {
+  EmptyState,
+  FilterChips,
+  SourceTag,
+  StatusPill,
+  dayOf,
+  distinct,
+  formatDay,
+} from '../../../components';
 import { colors, layout, radius, spacing, type } from '../../../theme';
 import { amountPaidFor, formatRs, remainingPayableFor } from '../../../lib/ledgerMath';
-import { FilterChips, dayOf, distinct, formatDay } from '../FilterChips';
 import type { Bill } from '../api';
 
 export interface PayablesTabProps {
