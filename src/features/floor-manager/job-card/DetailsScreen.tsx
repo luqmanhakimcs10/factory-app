@@ -11,6 +11,13 @@ import {
   NumericKeypadSheet,
   StaticField,
 } from '../../../components';
+import type { NeedleEntry } from '../../../data/types';
+import {
+  applyToNeedles,
+  checkStitchTotal,
+  colorLabel,
+  type DesignSheetExtraction,
+} from '../designSheet';
 import { colors, spacing } from '../../../theme';
 import { getSwatch } from '../../../data/swatches';
 import { useQuery } from '../../../data/useQuery';
@@ -27,7 +34,16 @@ import { useJobCard } from './jobCardStore';
 
 type Props = NativeStackScreenProps<FloorManagerStackParamList, 'JobCardDetails'>;
 
-/** Step 2. Needle layout and the stitch totals that fall out of it. */
+/**
+ * Step 2. Needle layout and the stitch totals that fall out of it.
+ *
+ * When step 1 read a design sheet, the stitch counts arrive here already filled
+ * in and flagged amber: read from the photo, not yet checked against the paper.
+ * Tapping one accepts it, long-pressing corrects it, and either way it stops
+ * being flagged. Nothing blocks on the flags — a floor manager who trusts a
+ * clean printout can walk straight past them — but they are visible on the
+ * Review screen too, so an unchecked number cannot reach a job card unnoticed.
+ */
 export function DetailsScreen({ navigation, route }: Props) {
   const { orderId } = route.params;
 
@@ -36,6 +52,10 @@ export function DetailsScreen({ navigation, route }: Props) {
   const needles = useJobCard((state) => state.needles);
   const seedNeedles = useJobCard((state) => state.seedNeedles);
   const setNeedle = useJobCard((state) => state.setNeedle);
+  const extraction = useJobCard((state) => state.extraction);
+  const unconfirmedColorIds = useJobCard((state) => state.unconfirmedColorIds);
+  const confirmColor = useJobCard((state) => state.confirmColor);
+  const confirmAll = useJobCard((state) => state.confirmAll);
 
   const [editingColorId, setEditingColorId] = useState<string | null>(null);
   const [codeError, setCodeError] = useState<string | null>(null);
@@ -125,12 +145,27 @@ export function DetailsScreen({ navigation, route }: Props) {
               colorId={entry.color_id}
               needle={entry.needle}
               stitches={entry.stitches}
+              unconfirmed={unconfirmedColorIds.includes(entry.color_id)}
+              onConfirm={() => confirmColor(entry.color_id)}
               onChangeNeedle={(needle) => setNeedle(entry.color_id, { needle })}
               onEditStitches={() => setEditingColorId(entry.color_id)}
             />
           ))
         )}
+
+        {unconfirmedColorIds.length > 0 ? (
+          <Button
+            label={`Confirm all ${unconfirmedColorIds.length} read from the sheet`}
+            icon="check"
+            tone="outline"
+            onPress={confirmAll}
+          />
+        ) : null}
       </Card>
+
+      {extraction ? (
+        <ExtractionNotes extraction={extraction} needles={needles} />
+      ) : null}
 
       <View style={styles.totals}>
         <StaticField
@@ -160,6 +195,67 @@ export function DetailsScreen({ navigation, route }: Props) {
         onClose={() => setEditingColorId(null)}
       />
     </JobCardLayout>
+  );
+}
+
+/**
+ * What the sheet said that these rows could not absorb.
+ *
+ * Three separate discrepancies, and they mean different things, so they are not
+ * collapsed into one warning:
+ *
+ * - A colour on the sheet that no sheet on this order uses. Usually the client
+ *   handed over the sheet for a different order, and it is the only sign of that
+ *   before thread gets requested for a colour nobody is stitching.
+ * - A colour on the order the sheet never mentioned. Its stitch count is still
+ *   whatever it was, so this says "you still have to type this one".
+ * - Per-colour counts that do not add up to the sheet's own total. The single
+ *   best signal that one digit was misread, because the wrong number looks
+ *   entirely plausible on its own line.
+ *
+ * None of them block. The sheet is the client's paperwork, not the factory's
+ * record, and a floor manager who can see why it disagrees is better served
+ * than one who is stopped by it.
+ */
+function ExtractionNotes({
+  extraction,
+  needles,
+}: {
+  extraction: DesignSheetExtraction;
+  needles: NeedleEntry[];
+}) {
+  const { unmatched, missing } = applyToNeedles(needles, extraction);
+  const check = checkStitchTotal(extraction);
+
+  if (unmatched.length === 0 && missing.length === 0 && !check.mismatch) return null;
+
+  return (
+    <Card title="Sheet did not match">
+      {check.mismatch ? (
+        <NoteCard
+          title="Stitch total does not add up"
+          text={`The colours on the sheet add up to ${check.sum.toLocaleString()}, but the sheet's own total says ${check.total?.toLocaleString()}. One of the counts was probably misread — check them against the paper.`}
+        />
+      ) : null}
+
+      {unmatched.length > 0 ? (
+        <NoteCard
+          title="On the sheet, not on this order"
+          text={`${unmatched
+            .map(colorLabel)
+            .join(', ')} — no sheet on this order uses ${unmatched.length === 1 ? 'it' : 'them'}. Check the client handed over the right design sheet.`}
+        />
+      ) : null}
+
+      {missing.length > 0 ? (
+        <NoteCard
+          title="Not on the sheet"
+          text={`${missing
+            .map((colorId) => getSwatch(colorId)?.label ?? colorId)
+            .join(', ')} — the sheet gave no stitch count, so ${missing.length === 1 ? 'this one still needs' : 'these still need'} typing in.`}
+        />
+      ) : null}
+    </Card>
   );
 }
 

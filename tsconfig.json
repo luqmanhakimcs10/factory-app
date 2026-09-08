@@ -2,5 +2,10 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true
-  }
+  },
+  // Edge functions run on Deno, not in the Expo bundle: they import `npm:`
+  // specifiers and use the `Deno` global, neither of which resolves under the
+  // app's React Native types. They are typechecked by `deno check` instead —
+  // see supabase/functions/README.md.
+  "exclude": ["supabase/functions"]
 }

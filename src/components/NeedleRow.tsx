@@ -16,6 +16,19 @@ export interface NeedleRowProps {
   onChangeNeedle: (needle: number) => void;
   /** Opens the numeric keypad — the caller owns the sheet. */
   onEditStitches: () => void;
+  /**
+   * This row's values were read off a photographed design sheet and nobody has
+   * checked them against the paper yet.
+   *
+   * The stitch field is outlined rather than filled in, and carries a tap-to-
+   * confirm affordance instead of the edit pencil. A machine-read number that
+   * looks identical to a typed one is the failure this whole flow exists to
+   * avoid: it drives thread purchasing and machine hours, and a misread digit
+   * is only expensive once it has been acted on.
+   */
+  unconfirmed?: boolean;
+  /** Accept the read value as correct. Required when `unconfirmed` is set. */
+  onConfirm?: () => void;
 }
 
 /** Editable needle assignment: which needle runs this colour, for how long. */
@@ -26,6 +39,8 @@ export function NeedleRow({
   stitches,
   onChangeNeedle,
   onEditStitches,
+  unconfirmed = false,
+  onConfirm,
 }: NeedleRowProps) {
   const label = getSwatch(colorId)?.label ?? colorId;
 
@@ -65,12 +80,28 @@ export function NeedleRow({
 
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Edit stitch count for ${label}`}
-        onPress={onEditStitches}
-        style={styles.stitchField}
+        accessibilityLabel={
+          unconfirmed
+            ? `${stitches.toLocaleString()} stitches read from the sheet for ${label}. Tap to confirm, or long-press to correct.`
+            : `Edit stitch count for ${label}`
+        }
+        onPress={unconfirmed ? onConfirm : onEditStitches}
+        // Correcting a read value stays one gesture away rather than behind a
+        // confirm-then-edit round trip: the common case for a wrong number is
+        // that the floor manager can already see the right one on the paper.
+        onLongPress={unconfirmed ? onEditStitches : undefined}
+        style={[styles.stitchField, unconfirmed && styles.stitchFieldUnconfirmed]}
       >
-        <Text style={[type.code, styles.stitchValue]}>{stitches.toLocaleString()}</Text>
-        <Feather name="edit-2" size={12} color={colors.textMuted} />
+        <Text
+          style={[type.code, styles.stitchValue, unconfirmed && styles.stitchValueUnconfirmed]}
+        >
+          {stitches.toLocaleString()}
+        </Text>
+        <Feather
+          name={unconfirmed ? 'check' : 'edit-2'}
+          size={12}
+          color={unconfirmed ? colors.warning : colors.textMuted}
+        />
       </Pressable>
     </View>
   );
@@ -155,7 +186,14 @@ const styles = StyleSheet.create({
     minWidth: 74,
     justifyContent: 'flex-end',
   },
+  stitchFieldUnconfirmed: {
+    borderColor: colors.warning,
+    backgroundColor: colors.warningBg,
+  },
   stitchValue: {
     color: colors.textPrimary,
+  },
+  stitchValueUnconfirmed: {
+    color: colors.warning,
   },
 });
