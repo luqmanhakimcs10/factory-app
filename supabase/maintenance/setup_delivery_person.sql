@@ -124,7 +124,7 @@ select
   case c.rn when 3 then 1 else 0 end,
   case c.rn when 1 then null else 'seed/placeholder.jpg' end,
   case c.rn when 3 then 'seed/placeholder.jpg' else null end,
-  (select id from profiles p join auth.users u on u.id = p.id
+  (select p.id from profiles p join auth.users u on u.id = p.id
    where u.email = 'delivery.a@example.com')
 from candidate c
 where not exists (
@@ -146,7 +146,7 @@ with target as (
 created as (
   insert into return_requests (factory_id, order_id, status, raised_at, created_by)
   select t.factory_id, t.order_id, 'pending', now() - interval '2 days',
-         (select id from profiles p join auth.users u on u.id = p.id
+         (select p.id from profiles p join auth.users u on u.id = p.id
           where u.email = 'qa.a@example.com')
   from target t
   returning id, order_id
@@ -156,7 +156,7 @@ select
   c.id,
   (select suffix from target) || '-1.' || v.n,
   v.defect::defect_type,
-  (select id from profiles p join auth.users u on u.id = p.id
+  (select p.id from profiles p join auth.users u on u.id = p.id
    where u.email = 'qa.a@example.com')
 from created c
 cross join (values (1, 'stain'), (2, 'misalign')) as v(n, defect);
