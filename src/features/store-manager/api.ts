@@ -3,12 +3,15 @@ import { z } from 'zod';
 import { supabase } from '../../data/supabase';
 import { BUCKETS, uploadPhoto } from '../../data/storage';
 import { tillaHex } from '../../data/tillaSwatches';
+import { formatQuantity } from '../../lib/quantityFormat';
+import { piecesFor } from '../../lib/sequinMath';
 import {
   uuid,
   materialEntrySchema,
   poSourceSchema,
   poStatusSchema,
   stockItemSchema,
+  stockTypeSchema,
   type PoStatus,
   type StockItem,
   type StockType,
@@ -66,25 +69,38 @@ export function stockLabel(item: StockItem): string {
     .join(' · ');
 }
 
+/**
+ * The primary quantity line.
+ *
+ * Sequin's piece count is the *second* line here (see below), so this asks
+ * `formatQuantity` for the reel count alone by withholding the size — the two
+ * together would put the same parenthetical on both lines of the same row.
+ */
 export function stockQuantity(item: StockItem): string {
   if (item.type === 'sequin') {
-    return item.roll_count === null ? '—' : `${item.roll_count} CDs`;
+    return item.roll_count === null ? '—' : formatQuantity('sequin', item.roll_count);
   }
-  return item.quantity_grams === null
-    ? '—'
-    : `${item.quantity_grams.toLocaleString()} g`;
+  return item.quantity_grams === null ? '—' : formatQuantity(item.type, item.quantity_grams);
 }
 
 /**
- * The sequin piece count, which is always derived from the roll count and never
- * typed in. The conversion factor is not available yet, so this reports the
- * absence rather than inventing a number.
+ * The sequin piece count — always derived from the roll count, never typed in.
+ *
+ * It used to read `stock_items.piece_count`, which 0008 deliberately left null
+ * because the conversion factor did not exist yet. It does now, and it lives in
+ * `lib/sequinMath`. Computing it here rather than reading the column is what
+ * keeps this figure identical to the one Procurement's Fulfill screen shows for
+ * the same size and quantity: one formula, called twice.
+ *
+ * The stored column is left alone. Backfilling it would create a second source
+ * of truth that goes stale the moment the factor is revised.
  */
 export function stockComputedQuantity(item: StockItem): string | undefined {
   if (item.type !== 'sequin') return undefined;
-  return item.piece_count === null
-    ? 'Pieces: pending conversion table'
-    : `${item.piece_count.toLocaleString()} pieces (computed)`;
+  if (item.roll_count === null || item.size_mm === null || item.size_mm <= 0) {
+    return 'Pieces: needs a size on this item';
+  }
+  return `${piecesFor(item.roll_count, item.size_mm).toLocaleString()} pieces (computed)`;
 }
 
 /** Fill for a stock row: SWATCHES key, tilla shade, or a stored hex. */
@@ -105,13 +121,19 @@ const purchaseOrderSchema = z.object({
   source: poSourceSchema,
   supplier_name: z.string().nullable(),
   date: z.string(),
+  actual_supplier: z.object({ name: z.string() }).nullable(),
   po_items: z.array(
     z.object({
       id: uuid(),
       qty: z.number(),
+      price: z.number().nullable(),
+      is_additional: z.boolean(),
+      item_type: stockTypeSchema.nullable(),
+      color_id: z.string().nullable(),
+      sequin_size_mm: z.number().nullable(),
       stock_items: z
         .object({
-          type: z.enum(['thread', 'tilla', 'sequin', 'bobbin']),
+          type: stockTypeSchema,
           label: z.string(),
           color_id: z.string().nullable(),
           custom_hex: z.string().nullable(),
@@ -123,12 +145,27 @@ const purchaseOrderSchema = z.object({
 
 export type PurchaseOrder = z.infer<typeof purchaseOrderSchema>;
 
+const PO_SELECT =
+  'id, po_number, status, source, supplier_name, date, ' +
+  'actual_supplier:actual_supplier_id(name), ' +
+  'po_items(id, qty, price, is_additional, item_type, color_id, sequin_size_mm, ' +
+  'stock_items(type, label, color_id, custom_hex))';
+
+/**
+ * The live total, summed from the line items rather than stored.
+ *
+ * Same resolution as `total_receivable` in the Accountant module: a stored
+ * total is a number that silently disagrees with its own line items the first
+ * time one of them changes.
+ */
+export function poTotal(po: PurchaseOrder): number {
+  return po.po_items.reduce((sum, item) => sum + (item.price ?? 0), 0);
+}
+
 export async function listPurchaseOrders(factoryId: string): Promise<PurchaseOrder[]> {
   const { data, error } = await supabase
     .from('purchase_orders')
-    .select(
-      'id, po_number, status, source, supplier_name, date, po_items(id, qty, stock_items(type, label, color_id, custom_hex))',
-    )
+    .select(PO_SELECT)
     .eq('factory_id', factoryId)
     .order('date', { ascending: false });
 
@@ -142,7 +179,13 @@ export async function listPurchaseOrders(factoryId: string): Promise<PurchaseOrd
  * Only the first two appear in the source screenshots; `confirmed` and
  * `received` are inferred, and are assumed terminal here.
  */
-const OPEN_PO_STATUSES: PoStatus[] = ['awaitingProcurement', 'awaitingConfirmation'];
+const OPEN_PO_STATUSES: PoStatus[] = [
+  'awaitingProcurement',
+  'awaitingConfirmation',
+  // Priced by procurement and waiting on this role's confirmation — as open as
+  // a PO gets, and the one state where the store manager is the blocker.
+  'submitted',
+];
 
 export function isOpenPo(po: PurchaseOrder): boolean {
   return OPEN_PO_STATUSES.includes(po.status);

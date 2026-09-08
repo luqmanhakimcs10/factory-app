@@ -19,6 +19,8 @@ export const BUCKETS = {
   ledgerPhotos: 'ledger-photos',
   /** Company Admin: employee and finishing-partner CNIC / ID photos. */
   employeeDocs: 'employee-docs',
+  /** Procurement: the supplier bill photographed at submission. */
+  billPhotos: 'bill-photos',
   /** Super Admin: per-tenant CNIC photos. Written by the platform operator. */
   factoryDocs: 'factory-docs',
 } as const;

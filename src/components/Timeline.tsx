@@ -10,8 +10,9 @@ type StageKey = NonNullable<OrderStage>;
 
 const STAGE_ICONS: Record<StageKey, React.ComponentProps<typeof Feather>['name']> = {
   inspection: 'search',
-  coding: 'hash',
   jobcard: 'clipboard',
+  materialCollection: 'package',
+  machineAssignment: 'cpu',
   production: 'settings',
   finishing: 'scissors',
   delivery: 'truck',
@@ -33,7 +34,7 @@ export interface TimelineProps {
   style?: ViewStyle;
 }
 
-/** The six pipeline stages, fixed order, with the connecting line. */
+/** The seven pipeline stages, fixed order, with the connecting line. */
 export function Timeline({
   currentStage,
   stageStates,

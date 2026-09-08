@@ -81,6 +81,9 @@ export function StoreManagerHomeScreen({ navigation }: Props) {
                 note: 'The purchase-order detail view has not been specified yet.',
               })
             }
+            onOpenSubmittedPo={(purchaseOrderId) =>
+              navigation.navigate('PODetail', { purchaseOrderId })
+            }
           />
         ) : null}
 

@@ -21,6 +21,15 @@ export interface NumericKeypadSheetProps {
   minLength?: number;
   /** Formats the live display only; `onSubmit` always receives raw digits. */
   format?: (digits: string) => string;
+  /**
+   * Unit shown after the value while typing — " Rs", " g", " CDs", " pcs".
+   *
+   * A prop rather than a second keypad, and rather than being baked into
+   * `format`: what a number means changes with the field the keypad was opened
+   * from, not with how the digits are grouped. A caller that already formats
+   * its own unit into `format` simply leaves this unset.
+   */
+  unitSuffix?: string;
   onSubmit: (digits: string) => void;
   onClose: () => void;
 }
@@ -38,6 +47,7 @@ export function NumericKeypadSheet({
   maxLength = 15,
   minLength = 1,
   format,
+  unitSuffix,
   onSubmit,
   onClose,
 }: NumericKeypadSheetProps) {
@@ -77,7 +87,9 @@ export function NumericKeypadSheet({
           style={[styles.display, draft.length === 0 && styles.displayEmpty]}
           numberOfLines={1}
         >
-          {draft.length === 0 ? placeholder : (format?.(draft) ?? draft)}
+          {draft.length === 0
+            ? placeholder
+            : `${format?.(draft) ?? draft}${unitSuffix ?? ''}`}
         </Text>
 
         <View style={styles.grid}>

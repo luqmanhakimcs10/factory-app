@@ -68,3 +68,5 @@ export { SourceTag } from './SourceTag';
 export type { SourceTagProps } from './SourceTag';
 export { StatPair } from './StatPair';
 export type { StatPairProps } from './StatPair';
+export { PriceTap } from './PriceTap';
+export type { PriceTapProps } from './PriceTap';

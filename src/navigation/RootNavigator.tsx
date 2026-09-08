@@ -22,9 +22,9 @@ import { SuperAdminStack } from './SuperAdminStack';
  * Roles map onto the order lifecycle as follows:
  *   order_taker    intake, before `stage = 'inspection'`
  *   qa_person      `stage = 'inspection'`
- *   floor_manager  `stage = 'coding'` through `'production'`
+ *   floor_manager  `stage = 'jobcard'` through `'production'`
  *   store_manager  the `materialRequested -> readyToCollect` handoff, plus stock
- *   accountant     money: invoices once every sheet is `ready`, confirmed bills,
+ *   accountant     money: invoices once an order is delivered, confirmed bills,
  *                  payroll, loans read-only, expenses raised for approval
  * Everything from `finishing` onward belongs to roles that do not exist yet.
  *

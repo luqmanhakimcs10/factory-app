@@ -16,10 +16,17 @@ import { listPurchaseOrders, poSwatches, type PurchaseOrder } from '../api';
 
 export interface POsScreenProps {
   onNewPurchaseOrder: () => void;
+  /** The two undesigned statuses — still the stub. */
   onOpenPo: (purchaseOrderId: string) => void;
+  /** A priced bill, which has a real detail screen. */
+  onOpenSubmittedPo: (purchaseOrderId: string) => void;
 }
 
-export function POsScreen({ onNewPurchaseOrder, onOpenPo }: POsScreenProps) {
+export function POsScreen({
+  onNewPurchaseOrder,
+  onOpenPo,
+  onOpenSubmittedPo,
+}: POsScreenProps) {
   const factoryId = useSession((state) => state.profile?.factory_id);
   const [dateFilter, setDateFilter] = useState<DateFilterValue>(null);
 
@@ -33,6 +40,9 @@ export function POsScreen({ onNewPurchaseOrder, onOpenPo }: POsScreenProps) {
     : orders;
 
   const requested = visible.filter((po) => po.status === 'awaitingProcurement');
+  // Procurement has priced these and attached a bill. This is the only section
+  // whose cards open a real screen — see `PODetailScreen`.
+  const submitted = visible.filter((po) => po.status === 'submitted');
   const awaiting = visible.filter((po) => po.status === 'awaitingConfirmation');
 
   return (
@@ -67,6 +77,15 @@ export function POsScreen({ onNewPurchaseOrder, onOpenPo }: POsScreenProps) {
             requested.map((po) => renderCard(po, onOpenPo))
           )}
 
+          <Text style={[type.heading, styles.sectionGap]}>
+            Submitted — Needs Your Confirmation
+          </Text>
+          {submitted.length === 0 ? (
+            <EmptyState icon="inbox" title="No bills waiting on you" />
+          ) : (
+            submitted.map((po) => renderCard(po, onOpenSubmittedPo))
+          )}
+
           <Text style={[type.heading, styles.sectionGap]}>Awaiting Confirmation</Text>
           {awaiting.length === 0 ? (
             <EmptyState icon="inbox" title="Nothing awaiting confirmation" />
@@ -87,7 +106,7 @@ function renderCard(po: PurchaseOrder, onOpenPo: (id: string) => void) {
       poNumber={po.po_number}
       // A manual PO has no supplier yet, so the card carries its status
       // instead of a name.
-      title={po.supplier_name ?? 'Awaiting Procurement'}
+      title={po.actual_supplier?.name ?? po.supplier_name ?? 'Awaiting Procurement'}
       tag={manual ? 'MANUAL' : 'SYSTEM-GENERATED'}
       date={new Date(po.date).toLocaleDateString()}
       swatches={poSwatches(po)}

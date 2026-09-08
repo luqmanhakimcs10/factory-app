@@ -1,25 +1,39 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { Button, NumericKeypadSheet } from '../../../components';
+import { useQuery } from '../../../data/useQuery';
 import { confirmDestructive } from '../../../lib/alert';
 import { formatRs } from '../../../lib/ledgerMath';
 import { useSession } from '../../../state/session';
 import type { CompanyAdminStackParamList } from '../../../navigation/CompanyAdminStack';
 import { FormScreen } from '../FormScreen';
-import { ChipField, PhotoField, PriceField, StaticTextField, TextField } from '../components';
+import {
+  ChipField,
+  MultiChipField,
+  PhotoField,
+  PriceField,
+  SearchPickerField,
+  StaticTextField,
+  TextField,
+} from '../components';
 import {
   EMPLOYEE_ROLES,
   EMPLOYEE_ROLE_LABELS,
+  RESPONSIBILITIES,
+  RESPONSIBILITY_LABELS,
   SALARY_AMOUNT_LABELS,
   SALARY_BASES,
   SALARY_BASIS_LABELS,
+  allowsResponsibilities,
   allowsSalaryBasisChoice,
+  listProfiles,
   monthYear,
   salaryFieldValue,
   saveEmployee,
   type EmployeeRole,
+  type Responsibility,
   type RosterStatus,
   type SalaryBasis,
 } from '../rosters';
@@ -34,6 +48,11 @@ const ROLE_OPTIONS = EMPLOYEE_ROLES.map((role) => ({
 const BASIS_OPTIONS = SALARY_BASES.map((basis) => ({
   value: basis,
   label: SALARY_BASIS_LABELS[basis],
+}));
+
+const RESPONSIBILITY_OPTIONS = RESPONSIBILITIES.map((responsibility) => ({
+  value: responsibility,
+  label: RESPONSIBILITY_LABELS[responsibility],
 }));
 
 /** Trimmed, or null — an empty optional field is absent, not an empty string. */
@@ -58,6 +77,18 @@ function optional(value: string): string | null {
  *   illegal value the save would then be rejected for.
  * - **Save needs a name, a role and a rate.** Everything else, photographs
  *   included, is genuinely optional.
+ *
+ * Two fields carry the unified-persona model:
+ *
+ * - **Responsibilities are grants, not labels.** Each chip is a `responsibility`
+ *   enum value that `has_grant()` checks inside RLS policies and RPCs, so
+ *   ticking one here is what actually opens a screen for that person. Only a
+ *   `delivery` employee gets them, the same rule the column has always carried.
+ * - **The login link is optional and is what makes a grant reachable.** Grants
+ *   are looked up by `employees.profile_id = auth.uid()`; an employee with
+ *   responsibilities and no linked login holds grants nothing can ever check.
+ *   The form says so rather than refusing to save — the admin may well be
+ *   creating the roster row before the account exists.
  */
 export function EmployeeFormScreen({ navigation, route }: Props) {
   const existing = route.params.employee;
@@ -75,12 +106,23 @@ export function EmployeeFormScreen({ navigation, route }: Props) {
   const [basis, setBasis] = useState<SalaryBasis>(existing?.salary_basis ?? 'fixed');
   const [salary, setSalary] = useState<number | null>(existing?.salary_amount ?? null);
   const [contact, setContact] = useState(existing?.contact ?? '');
+  const [responsibilities, setResponsibilities] = useState<Responsibility[]>(
+    existing?.responsibilities ?? [],
+  );
+  const [profileId, setProfileId] = useState<string | null>(existing?.profile_id ?? null);
+
+  const fetchProfiles = useCallback(
+    () => listProfiles(factoryId as string),
+    [factoryId],
+  );
+  const profiles = useQuery(fetchProfiles, Boolean(factoryId));
 
   const [keypadOpen, setKeypadOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const choosesBasis = allowsSalaryBasisChoice(role);
+  const grantsWork = allowsResponsibilities(role);
   const canSave = name.trim().length > 0 && role !== null && salary !== null && salary > 0;
 
   const pickRole = (next: EmployeeRole) => {
@@ -88,7 +130,17 @@ export function EmployeeFormScreen({ navigation, route }: Props) {
     // Leaving Machine Worker leaves `basis` on a value the check constraint
     // rejects, and the picker that could correct it is gone by then.
     if (!allowsSalaryBasisChoice(next)) setBasis('fixed');
+    // Same reasoning, one step further: grants held by a role that cannot hold
+    // them are grants nobody can see to revoke. Cleared with the picker.
+    if (!allowsResponsibilities(next)) setResponsibilities([]);
   };
+
+  const toggleResponsibility = (next: Responsibility) =>
+    setResponsibilities((current) =>
+      current.includes(next)
+        ? current.filter((held) => held !== next)
+        : [...current, next],
+    );
 
   const submit = async (status: RosterStatus) => {
     if (!canSave || !factoryId || !role || salary === null) return;
@@ -110,6 +162,8 @@ export function EmployeeFormScreen({ navigation, route }: Props) {
           employeePhoto,
           cnicPhoto,
           referenceName: optional(reference),
+          responsibilities: grantsWork ? responsibilities : [],
+          profileId,
           status,
         },
       });
@@ -208,12 +262,38 @@ export function EmployeeFormScreen({ navigation, route }: Props) {
           onPress={() => setKeypadOpen(true)}
         />
 
+        {grantsWork ? (
+          <MultiChipField
+            label="Responsibilities"
+            options={RESPONSIBILITY_OPTIONS}
+            selected={responsibilities}
+            onToggle={toggleResponsibility}
+          />
+        ) : null}
+
         <TextField
           label="Contact Number"
           value={contact}
           placeholder="03XX-XXXXXXX"
           onChangeText={setContact}
           keyboardType="phone-pad"
+        />
+
+        <SearchPickerField
+          label="Link to Login (optional)"
+          placeholder="Search sign-in accounts by name"
+          emptyLabel={
+            profiles.loading
+              ? 'Loading sign-in accounts…'
+              : 'No sign-in account matches that name.'
+          }
+          options={(profiles.data ?? []).map((profile) => ({
+            id: profile.id,
+            label: profile.full_name,
+            subLabel: profile.role,
+          }))}
+          selectedId={profileId}
+          onSelect={setProfileId}
         />
 
         {/* Set by the database on insert and never editable afterwards, so a

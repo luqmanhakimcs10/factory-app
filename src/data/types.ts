@@ -13,8 +13,9 @@ import { z } from 'zod';
 export type OrderStatus = 'draft' | 'in_progress' | 'completed';
 export type OrderStage =
   | 'inspection'
-  | 'coding'
   | 'jobcard'
+  | 'materialCollection'
+  | 'machineAssignment'
   | 'production'
   | 'finishing'
   | 'delivery'
@@ -29,7 +30,15 @@ export type DefectType =
   | 'other';
 export type DefectScope = 'repeat' | 'sheet';
 
-/** The 11 ERP roles. Only `order_taker` and `qa_person` have screens today. */
+/**
+ * The ERP roles.
+ *
+ * `staff` is the unified persona: one login whose capabilities come from the
+ * grants on its `employees.responsibilities` row rather than from the role
+ * itself. The dedicated `order_taker` / `procurement` roles stay supported —
+ * every policy touched by `0013_staff_persona.sql` checks the role *or* the
+ * grant, so existing accounts keep working.
+ */
 export type UserRole =
   | 'super_admin'
   | 'company_admin'
@@ -41,7 +50,8 @@ export type UserRole =
   | 'procurement'
   | 'delivery_person'
   | 'worker'
-  | 'finishing_partner';
+  | 'finishing_partner'
+  | 'staff';
 
 export interface Factory {
   id: string;
@@ -86,6 +96,13 @@ export interface Order {
   proof_photo_url: string | null;
   design_sheet_photo_url: string | null;
   alert_text: string | null;
+  /**
+   * When the order physically reached the client. Null until then.
+   *
+   * This, not production-readiness, is what makes an order invoiceable — an
+   * order can be fully stitched and finished and still owe nothing.
+   */
+  delivered_at: string | null;
   created_at: string;
 }
 
@@ -172,6 +189,8 @@ export interface MachineJob {
 export type StockType = 'thread' | 'tilla' | 'sequin' | 'bobbin';
 export type PoStatus =
   | 'awaitingProcurement'
+  /** Priced by Procurement, bill attached, awaiting the store manager. */
+  | 'submitted'
   | 'awaitingConfirmation'
   | 'confirmed'
   | 'received';
@@ -222,11 +241,19 @@ export interface InspectionUnit {
   defect_scope: DefectScope | null;
 }
 
-/** The six pipeline stages, in fixed order — drives the `Timeline` component. */
+/**
+ * The seven pipeline stages, in fixed order — drives the `Timeline` component.
+ *
+ * Grew from six in `0013_staff_persona.sql`. The old `coding` ("QA Coding")
+ * step is gone and the three floor phases it used to hide — materials, machine
+ * assignment, production — are now each their own stage, because those are the
+ * distinctions a client asking "where is my order" is actually asking about.
+ */
 export const ORDER_STAGES = [
   'inspection',
-  'coding',
   'jobcard',
+  'materialCollection',
+  'machineAssignment',
   'production',
   'finishing',
   'delivery',
@@ -234,8 +261,9 @@ export const ORDER_STAGES = [
 
 export const STAGE_LABELS: Record<NonNullable<OrderStage>, string> = {
   inspection: 'Initial Inspection',
-  coding: 'QA Coding',
   jobcard: 'Job Card',
+  materialCollection: 'Material Collection',
+  machineAssignment: 'Machine Assignment',
   production: 'Production',
   finishing: 'Finishing',
   delivery: 'Delivery',
@@ -312,9 +340,7 @@ export const billingSchema = z.object({
 }) satisfies z.ZodType<Billing>;
 
 export const orderStatusSchema = z.enum(['draft', 'in_progress', 'completed']);
-export const orderStageSchema = z
-  .enum(['inspection', 'coding', 'jobcard', 'production', 'finishing', 'delivery'])
-  .nullable();
+export const orderStageSchema = z.enum(ORDER_STAGES).nullable();
 export const unitStatusSchema = z.enum(['pending', 'passed', 'returned']);
 export const defectTypeSchema = z.enum([
   'thread',
@@ -337,6 +363,7 @@ export const userRoleSchema = z.enum([
   'delivery_person',
   'worker',
   'finishing_partner',
+  'staff',
 ]);
 
 export const factorySchema = z.object({
@@ -373,6 +400,7 @@ export const orderSchema = z.object({
   proof_photo_url: z.string().nullable(),
   design_sheet_photo_url: z.string().nullable(),
   alert_text: z.string().nullable(),
+  delivered_at: z.string().nullable(),
   created_at: z.string(),
 }) satisfies z.ZodType<Order>;
 
@@ -390,6 +418,7 @@ export const orderSheetSchema = z.object({
 export const stockTypeSchema = z.enum(['thread', 'tilla', 'sequin', 'bobbin']);
 export const poStatusSchema = z.enum([
   'awaitingProcurement',
+  'submitted',
   'awaitingConfirmation',
   'confirmed',
   'received',

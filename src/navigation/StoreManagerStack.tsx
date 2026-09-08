@@ -3,6 +3,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ComingSoonScreen } from '../features/store-manager/ComingSoonScreen';
 import { StoreManagerHomeScreen } from '../features/store-manager/HomeScreen';
 import { IssueDetailScreen } from '../features/store-manager/issue/IssueDetailScreen';
+import { PODetailScreen } from '../features/store-manager/purchase-orders/PODetailScreen';
 
 /**
  * Store Manager.
@@ -10,10 +11,14 @@ import { IssueDetailScreen } from '../features/store-manager/issue/IssueDetailSc
  * The module root is a four-tab segmented control (Stock / PO's / Issue /
  * Audit); everything reachable from it is a route on this one stack.
  *
- * Only two destinations are real. The rest land on `ComingSoon`, because this
+ * Three destinations are real. The rest land on `ComingSoon`, because this
  * module was specced from six static list screenshots with no detail or
  * creation screens in them, and inventing those forms would bake in decisions
  * nobody has made.
+ *
+ * `PODetail` is the exception that earned its way out of that stub: once
+ * Procurement could submit a priced bill there was something concrete to
+ * review, so the screen exists for `status = 'submitted'` and only for that.
  *
  * Its place in the order lifecycle is one transition: the Issue tab turns
  * `floor_status = 'materialRequested'` into `'readyToCollect'`, which is what
@@ -23,6 +28,7 @@ import { IssueDetailScreen } from '../features/store-manager/issue/IssueDetailSc
 export type StoreManagerStackParamList = {
   Home: undefined;
   IssueDetail: { orderId: string };
+  PODetail: { purchaseOrderId: string };
   ComingSoon: { title: string; note?: string };
 };
 
@@ -33,6 +39,7 @@ export function StoreManagerTabs() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Home" component={StoreManagerHomeScreen} />
       <Stack.Screen name="IssueDetail" component={IssueDetailScreen} />
+      <Stack.Screen name="PODetail" component={PODetailScreen} />
       <Stack.Screen name="ComingSoon" component={ComingSoonScreen} />
     </Stack.Navigator>
   );

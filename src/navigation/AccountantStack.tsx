@@ -24,10 +24,12 @@ import { SalaryDetailScreen } from '../features/accountant/salary/SalaryDetailSc
  * `loan_history`, and insert-but-not-update on `expenses`. The approve/reject
  * buttons live in that module's Approvals inbox, not here.
  *
- * Its place in the order lifecycle: an order becomes an invoice once every
- * `order_sheets.stage` is `ready` — the same condition that makes the Floor
- * Manager's Invoice card appear. Bills are `purchase_orders` at `confirmed`,
- * and nothing earlier is even readable by this role.
+ * Its place in the order lifecycle: an order becomes an invoice once it has
+ * been **delivered** — `orders.stage = 'delivery'` with a `delivered_at`, both
+ * written by `mark_delivered`. Production-readiness is no longer enough: a
+ * finished order still owes nothing until it reaches the client. Bills are
+ * `purchase_orders` at `confirmed`, and nothing earlier is even readable by
+ * this role.
  */
 export type AccountantStackParamList = {
   Ledgers: undefined;

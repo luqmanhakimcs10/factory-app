@@ -6,6 +6,7 @@ import {
   uuid,
   billingSchema,
   needleEntrySchema,
+  orderStageSchema,
   poSourceSchema,
   type Billing,
   type NeedleEntry,
@@ -47,6 +48,8 @@ const invoiceSchema = z.object({
   billing: billingSchema.nullable(),
   needles: z.array(needleEntrySchema).nullable(),
   damaged_repeats_price: z.number().nullable(),
+  stage: orderStageSchema,
+  delivered_at: z.string().nullable(),
   created_at: z.string(),
   clients: z.object({ name: z.string() }).nullable(),
   order_sheets: z.array(
@@ -74,7 +77,7 @@ export interface Invoice extends InvoiceLike {
 }
 
 const INVOICE_SELECT =
-  'id, code, design_code, billing, needles, damaged_repeats_price, created_at, clients(name), order_sheets(id, color_id, custom_hex, repeats, stage), invoice_payments(id, amount, paid_at, photo_url, recorder:recorded_by(full_name))';
+  'id, code, design_code, billing, needles, damaged_repeats_price, stage, delivered_at, created_at, clients(name), order_sheets(id, color_id, custom_hex, repeats, stage), invoice_payments(id, amount, paid_at, photo_url, recorder:recorded_by(full_name))';
 
 function toInvoice(row: InvoiceRow): Invoice {
   return {
@@ -99,16 +102,20 @@ function toInvoice(row: InvoiceRow): Invoice {
 }
 
 /**
- * An order becomes an invoice once every sheet on it is `ready` — the same
- * condition that makes the Floor Manager's own Invoice card appear. Neither
- * `stage` nor `floor_status` has a single value meaning "invoiceable", so the
- * check is on the sheets.
+ * An order becomes an invoice once it has actually been **delivered**.
+ *
+ * This used to read "every sheet on it is `ready`", i.e. production-complete.
+ * That was wrong in the direction that costs money: a fully stitched, finished
+ * order sitting in the factory owed nothing yet, and it appeared on the
+ * receivables ledger anyway. `mark_delivered` is now the single event that
+ * makes an order billable, and it writes both halves of this check.
+ *
+ * Both halves are tested rather than just `delivered_at`, because `stage` is
+ * the column the rest of the app reads to decide where an order is and the two
+ * are only ever written together.
  */
 function isInvoiceable(row: InvoiceRow): boolean {
-  return (
-    row.order_sheets.length > 0 &&
-    row.order_sheets.every((sheet) => sheet.stage === 'ready')
-  );
+  return row.stage === 'delivery' && row.delivered_at !== null;
 }
 
 export async function listInvoices(factoryId: string): Promise<Invoice[]> {

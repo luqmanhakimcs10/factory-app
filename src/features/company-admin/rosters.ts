@@ -54,6 +54,42 @@ export const EMPLOYEE_ROLE_LABELS: Record<EmployeeRole, string> = {
   delivery: 'Delivery',
 };
 
+/**
+ * `responsibility`, in the mockup's chip order.
+ *
+ * These ids are the grant names the database checks: `has_grant('orderTaking')`
+ * and friends read exactly these strings, and `0013_staff_persona.sql` renamed
+ * the enum's labels to match. A typo here is a capability that silently never
+ * applies, so the list is defined once and everything else derives from it.
+ */
+export const RESPONSIBILITIES = [
+  'orderTaking',
+  'orderReturn',
+  'orderDelivery',
+  'procurePo',
+  'sheetMovement',
+] as const;
+export type Responsibility = (typeof RESPONSIBILITIES)[number];
+
+export const RESPONSIBILITY_LABELS: Record<Responsibility, string> = {
+  orderTaking: 'Order Taking',
+  orderReturn: 'Order Returns',
+  orderDelivery: 'Order Delivery',
+  procurePo: 'Inventory Procurement',
+  sheetMovement: 'Delivery & Pickup Sheets from Finishing Partners',
+};
+
+/**
+ * Responsibilities are only meaningful for a `delivery` employee.
+ *
+ * The same shape as `allowsSalaryBasisChoice`: the column exists on every row
+ * and means nothing on most of them, so the form hides the picker rather than
+ * offering grants that would never be checked.
+ */
+export function allowsResponsibilities(role: EmployeeRole | null): boolean {
+  return role === 'delivery';
+}
+
 export const SALARY_BASES = ['fixed', 'per_day', 'per_stitch'] as const;
 export type SalaryBasis = (typeof SALARY_BASES)[number];
 
@@ -169,6 +205,8 @@ const employeeSchema = z.object({
   cnic_photo_url: z.string().nullable(),
   employee_photo_url: z.string().nullable(),
   reference_name: z.string().nullable(),
+  responsibilities: z.array(z.enum(RESPONSIBILITIES)).nullable(),
+  profile_id: uuid().nullable(),
   join_date: z.string(),
   status: rosterStatusSchema,
 });
@@ -176,7 +214,7 @@ const employeeSchema = z.object({
 export type Employee = z.infer<typeof employeeSchema>;
 
 const EMPLOYEE_SELECT =
-  'id, name, role, salary_basis, salary_amount, contact, address, cnic, cnic_photo_url, employee_photo_url, reference_name, join_date, status';
+  'id, name, role, salary_basis, salary_amount, contact, address, cnic, cnic_photo_url, employee_photo_url, reference_name, responsibilities, profile_id, join_date, status';
 
 export async function listEmployees(factoryId: string): Promise<Employee[]> {
   const { data, error } = await supabase
@@ -214,6 +252,10 @@ export interface EmployeeInput {
   employeePhoto: string | null;
   cnicPhoto: string | null;
   referenceName: string | null;
+  /** Empty for every role but `delivery`. Never null — an empty grant list. */
+  responsibilities: Responsibility[];
+  /** The `profiles` row this employee signs in as, or null for no login. */
+  profileId: string | null;
   status: RosterStatus;
 }
 
@@ -266,6 +308,8 @@ export async function saveEmployee(args: {
     cnic_photo_url: cnicPhotoUrl,
     employee_photo_url: employeePhotoUrl,
     reference_name: input.referenceName,
+    responsibilities: input.responsibilities,
+    profile_id: input.profileId,
     status: input.status,
   };
 
@@ -279,6 +323,33 @@ export async function saveEmployee(args: {
   if (error) throw error;
 }
 
+/**
+ * The sign-in accounts in this factory, for the optional login link above.
+ *
+ * `profiles` is readable factory-wide (0002_rls.sql), so this needs no special
+ * grant. It is deliberately unfiltered by role: which module a login lands in
+ * is that login's own `role`, and an admin linking a roster row to it is
+ * recording who a person *is*, not deciding what they can do.
+ */
+const loginProfileSchema = z.object({
+  id: uuid(),
+  full_name: z.string(),
+  role: z.string(),
+});
+
+export type LoginProfile = z.infer<typeof loginProfileSchema>;
+
+export async function listProfiles(factoryId: string): Promise<LoginProfile[]> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, full_name, role')
+    .eq('factory_id', factoryId)
+    .order('full_name');
+
+  if (error) throw error;
+  return z.array(loginProfileSchema).parse(data);
+}
+
 // --- Finishing partners -----------------------------------------------------
 
 const finishingPartnerSchema = z.object({
@@ -286,6 +357,7 @@ const finishingPartnerSchema = z.object({
   name: z.string(),
   stage_type: z.enum(FINISHING_STAGES),
   rate: z.number(),
+  sla_hours: z.number(),
   contact: z.string().nullable(),
   address: z.string().nullable(),
   cnic: z.string().nullable(),
@@ -296,7 +368,15 @@ const finishingPartnerSchema = z.object({
 export type FinishingPartner = z.infer<typeof finishingPartnerSchema>;
 
 const FINISHING_PARTNER_SELECT =
-  'id, name, stage_type, rate, contact, address, cnic, cnic_photo_url, status';
+  'id, name, stage_type, rate, sla_hours, contact, address, cnic, cnic_photo_url, status';
+
+/** The column's own default, and the form's starting value for a new partner. */
+export const DEFAULT_SLA_HOURS = 24;
+
+/** "24h turnaround" — the roster sub-line and the form's filled field. */
+export function slaLabel(hours: number): string {
+  return `${hours}h turnaround`;
+}
 
 export async function listFinishingPartners(
   factoryId: string,
@@ -315,6 +395,14 @@ export interface FinishingPartnerInput {
   name: string;
   stage: FinishingStage;
   rate: number;
+  /**
+   * How long this partner is expected to hold a batch.
+   *
+   * Snapshotted onto each `movements` row at creation, never read live from
+   * here — raising a partner's SLA next month must not retroactively rescue a
+   * movement that is already late.
+   */
+  slaHours: number;
   contact: string | null;
   address: string | null;
   cnic: string | null;
@@ -345,6 +433,7 @@ export async function saveFinishingPartner(args: {
     // it as a static field for the same reason — a second basis was removed
     // from the spec on purpose and is not to be reintroduced through a write.
     rate: input.rate,
+    sla_hours: input.slaHours,
     contact: input.contact,
     address: input.address,
     cnic: input.cnic,

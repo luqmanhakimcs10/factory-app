@@ -52,6 +52,7 @@ const fmOrderSchema = z.object({
   id: uuid(),
   code: z.string(),
   stage: orderStageSchema,
+  delivered_at: z.string().nullable(),
   floor_status: floorStatusSchema.nullable(),
   design_code: z.string().nullable(),
   job_card_code: z.string().nullable(),
@@ -71,7 +72,7 @@ export type FmOrder = z.infer<typeof fmOrderSchema>;
 export type FmSheet = z.infer<typeof fmSheetSchema>;
 
 const ORDER_SELECT =
-  'id, code, stage, floor_status, design_code, job_card_code, threads, needles, materials, stages, excluded_note, damaged_repeats_price, billing, created_at, clients(name), order_sheets(id, color_id, custom_hex, repeats, created_at, stage, stage_index, stage_records, inspection_units(status))';
+  'id, code, stage, delivered_at, floor_status, design_code, job_card_code, threads, needles, materials, stages, excluded_note, damaged_repeats_price, billing, created_at, clients(name), order_sheets(id, color_id, custom_hex, repeats, created_at, stage, stage_index, stage_records, inspection_units(status))';
 
 /** Sheets in a stable order — repeat codes and the sheet list depend on it. */
 export function sortedSheets(order: FmOrder): FmSheet[] {
@@ -126,16 +127,22 @@ export function allSheetsReady(order: FmOrder): boolean {
 /**
  * Which tab an order belongs to.
  *
- * The Job Cards filter is `floor_status IS NULL AND stage = 'coding'` — that is
- * exactly what Prompt 3's trigger leaves behind when every unit on an order has
- * been inspected.
+ * The Job Cards filter is `floor_status IS NULL AND stage = 'jobcard'` — that
+ * is exactly what the inspection trigger leaves behind when every unit on an
+ * order has been inspected. It was `'coding'` until the seven-stage migration
+ * (`0013_staff_persona.sql`) removed that value; the two must move together.
+ *
+ * Production and Ready both exclude a delivered order. `floor_status` stays on
+ * `inProduction` for the life of the row — nothing clears it — so without this
+ * an order that has already reached the client would sit on the floor's active
+ * views forever.
  */
 export function orderMatchesTab(order: FmOrder, tab: HomeTab): boolean {
   switch (tab) {
     case 'all':
       return true;
     case 'jobcards':
-      return order.floor_status === null && order.stage === 'coding';
+      return order.floor_status === null && order.stage === 'jobcard';
     case 'inventory':
       return (
         order.floor_status === 'materialRequested' ||
@@ -147,10 +154,15 @@ export function orderMatchesTab(order: FmOrder, tab: HomeTab): boolean {
       return (
         (order.floor_status === 'productionAwaiting' ||
           order.floor_status === 'inProduction') &&
-        !allSheetsReady(order)
+        !allSheetsReady(order) &&
+        order.delivered_at === null
       );
     case 'ready':
-      return order.floor_status === 'inProduction' && allSheetsReady(order);
+      return (
+        order.floor_status === 'inProduction' &&
+        allSheetsReady(order) &&
+        order.delivered_at === null
+      );
   }
 }
 

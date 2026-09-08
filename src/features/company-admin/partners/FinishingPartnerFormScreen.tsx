@@ -10,9 +10,11 @@ import type { CompanyAdminStackParamList } from '../../../navigation/CompanyAdmi
 import { FormScreen } from '../FormScreen';
 import { ChipField, PhotoField, PriceField, StaticTextField, TextField } from '../components';
 import {
+  DEFAULT_SLA_HOURS,
   FINISHING_STAGES,
   FINISHING_STAGE_LABELS,
   saveFinishingPartner,
+  slaLabel,
   type FinishingStage,
   type RosterStatus,
 } from '../rosters';
@@ -39,6 +41,12 @@ function optional(value: string): string | null {
  *
  * Name, stage and rate are required — a partner with no stage cannot be
  * assigned work, and one with no rate cannot be paid for it.
+ *
+ * **SLA is a setting here and a snapshot everywhere else.** Each `movements`
+ * row copies this number at the moment the batch is created and never reads it
+ * again, so raising a slow partner's SLA does not retroactively un-late the
+ * batches already sitting with them. Editing this field only changes what the
+ * *next* batch is judged against.
  */
 export function FinishingPartnerFormScreen({ navigation, route }: Props) {
   const existing = route.params.partner;
@@ -50,9 +58,10 @@ export function FinishingPartnerFormScreen({ navigation, route }: Props) {
   const [address, setAddress] = useState(existing?.address ?? '');
   const [stage, setStage] = useState<FinishingStage | null>(existing?.stage_type ?? null);
   const [rate, setRate] = useState<number | null>(existing?.rate ?? null);
+  const [slaHours, setSlaHours] = useState(existing?.sla_hours ?? DEFAULT_SLA_HOURS);
   const [contact, setContact] = useState(existing?.contact ?? '');
 
-  const [keypadOpen, setKeypadOpen] = useState(false);
+  const [keypadOpen, setKeypadOpen] = useState<'rate' | 'sla' | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,6 +80,7 @@ export function FinishingPartnerFormScreen({ navigation, route }: Props) {
           name: name.trim(),
           stage,
           rate,
+          slaHours,
           contact: optional(contact),
           address: optional(address),
           cnic: optional(cnic),
@@ -147,7 +157,14 @@ export function FinishingPartnerFormScreen({ navigation, route }: Props) {
         <PriceField
           label="Rate per Repeat (Rs.)"
           value={rate === null ? null : `${formatRs(rate)} /repeat`}
-          onPress={() => setKeypadOpen(true)}
+          onPress={() => setKeypadOpen('rate')}
+        />
+
+        <PriceField
+          label="Turnaround SLA (Hours)"
+          icon="clock"
+          value={slaLabel(slaHours)}
+          onPress={() => setKeypadOpen('sla')}
         />
 
         <TextField
@@ -182,7 +199,7 @@ export function FinishingPartnerFormScreen({ navigation, route }: Props) {
       </FormScreen>
 
       <NumericKeypadSheet
-        visible={keypadOpen}
+        visible={keypadOpen === 'rate'}
         title="Rate per repeat"
         initialValue={rate?.toString() ?? ''}
         placeholder="Tap to set"
@@ -191,9 +208,25 @@ export function FinishingPartnerFormScreen({ navigation, route }: Props) {
         format={(digits) => formatRs(Number(digits))}
         onSubmit={(digits) => {
           setRate(Number(digits));
-          setKeypadOpen(false);
+          setKeypadOpen(null);
         }}
-        onClose={() => setKeypadOpen(false)}
+        onClose={() => setKeypadOpen(null)}
+      />
+
+      <NumericKeypadSheet
+        visible={keypadOpen === 'sla'}
+        title="Turnaround SLA"
+        initialValue={slaHours.toString()}
+        placeholder="Hours"
+        maxLength={3}
+        minLength={1}
+        format={(digits) => slaLabel(Number(digits))}
+        onSubmit={(digits) => {
+          // Zero would make every movement late the instant it is dropped off.
+          setSlaHours(Math.max(1, Number(digits)));
+          setKeypadOpen(null);
+        }}
+        onClose={() => setKeypadOpen(null)}
       />
     </>
   );

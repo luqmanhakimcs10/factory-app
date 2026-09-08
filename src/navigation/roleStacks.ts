@@ -4,6 +4,7 @@ import { CompanyAdminStack } from './CompanyAdminStack';
 import { FloorManagerStack } from './FloorManagerStack';
 import { InspectionStack } from './InspectionStack';
 import { OrderTakerStack } from './OrderTakerStack';
+import { ProcurementStack } from './ProcurementStack';
 import { StoreManagerTabs } from './StoreManagerStack';
 
 /**
@@ -26,6 +27,7 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   delivery_person: 'Delivery Person',
   worker: 'Worker',
   finishing_partner: 'Finishing Partner',
+  staff: 'Staff',
 };
 
 /**
@@ -48,6 +50,7 @@ export const ROLE_STACKS: Partial<Record<UserRole, React.ComponentType>> = {
   store_manager: StoreManagerTabs,
   accountant: AccountantStack,
   company_admin: CompanyAdminStack,
+  procurement: ProcurementStack,
 };
 
 /** Roles that have a module, in the order they appear in `ROLE_STACKS`. */

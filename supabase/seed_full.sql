@@ -35,8 +35,9 @@
 -- TRIGGERS DO REAL WORK HERE
 -- Inserting an `order_sheets` row fans out one `inspection_units` row per
 -- repeat (0001). Updating a unit's status to passed/returned fires
--- `on_inspection_unit_decided` (0006), which advances `orders.stage` to
--- 'coding' once nothing is pending and writes `alert_text` on a return.
+-- `on_inspection_unit_decided` (0006, rewritten in 0013), which advances
+-- `orders.stage` to 'jobcard' once nothing is pending and writes `alert_text`
+-- on a return.
 -- Updating `orders.floor_status` fires `sync_stage_from_floor_status` (0007).
 -- So this file drives orders through the same transitions the app does rather
 -- than hand-writing end states, and the resulting rows are genuinely reachable.
@@ -49,17 +50,40 @@ set search_path = public, extensions;
 -- 0. Teardown — everything this file owns, children before parents
 -- ---------------------------------------------------------------------------
 
-delete from invoice_payments where id::text like '84000000-%';
-delete from po_payments       where id::text like '83000000-%';
-delete from po_items          where id::text like '82000000-%';
-delete from purchase_orders   where id::text like '81000000-%';
-delete from audit_line_items  where id::text like '8a000000-%';
-delete from audit_records     where id::text like '89000000-%';
-delete from loan_history      where id::text like '87000000-%';
-delete from loans             where id::text like '86000000-%';
-delete from salary_records    where id::text like '88000000-%';
-delete from expenses          where id::text like '85000000-%';
-delete from monthly_history   where id::text like '8b000000-%';
+-- Every child is matched by its PARENT, not by its own id prefix.
+--
+-- This is the difference between a teardown that works once and one that keeps
+-- working. An id-prefix delete only removes rows *this file* wrote; anything
+-- the app created against the same parent carries a `gen_random_uuid()` id, is
+-- left behind, and then blocks the parent delete outright:
+--
+--   ERROR: update or delete on table "orders" violates foreign key constraint
+--   "invoice_payments_order_id_fkey" on table "invoice_payments"
+--
+-- A payment recorded through Accountant's Record Payment screen and an
+-- `is_additional` line written by `submit_procurement_bill` both land in
+-- exactly that gap. Deleting by parent covers both, and still touches nothing
+-- outside this file's own UUID ranges.
+
+-- Orders and everything hanging off them.
+delete from invoice_payments where order_id::text like 'd0000000-%';
+delete from return_request_sheets
+  where return_request_id in (select id from return_requests where order_id::text like 'd0000000-%');
+delete from return_requests  where order_id::text like 'd0000000-%';
+delete from movements        where order_id::text like 'd0000000-%';
+
+-- Purchase orders and their lines.
+delete from po_payments      where purchase_order_id::text like '81000000-%';
+delete from po_items         where purchase_order_id::text like '81000000-%';
+delete from purchase_orders  where id::text like '81000000-%';
+
+delete from audit_line_items where audit_record_id::text like '89000000-%';
+delete from audit_records    where id::text like '89000000-%';
+delete from loan_history     where loan_id::text like '86000000-%';
+delete from loans            where id::text like '86000000-%';
+delete from salary_records   where id::text like '88000000-%';
+delete from expenses         where id::text like '85000000-%';
+delete from monthly_history  where id::text like '8b000000-%';
 delete from subscription_payments where id::text like '8c000000-%';
 
 -- inspection_units and order_sheets cascade from orders, but are cleared
@@ -67,6 +91,11 @@ delete from subscription_payments where id::text like '8c000000-%';
 delete from inspection_units where order_id::text like 'd0000000-%';
 delete from order_sheets     where order_id::text like 'd0000000-%';
 delete from orders           where id::text like 'd0000000-%';
+
+-- Movements point at finishing partners as well as at orders. The order-scoped
+-- delete above clears every one this seed's orders own; this catches any left
+-- against a partner row about to disappear.
+delete from movements          where finishing_partner_id::text like 'f1000000-%';
 
 delete from stock_items        where id::text like '71000000-%';
 delete from machines           where id::text like '61000000-%';
@@ -164,7 +193,7 @@ insert into employees (id, factory_id, name, role, salary_basis, salary_amount, 
   -- The only role for which `responsibilities` means anything.
   ('e2000000-0000-4000-8000-000000000009', '11111111-1111-1111-1111-111111111111',
    'Faisal Riaz', 'delivery', 'fixed', 34000, '03009991009', 'Bund Road, Lahore', '35201-1000009-9', 'Kamran Butt',
-   array['order_delivery', 'order_returns', 'finishing_partner_sheets']::responsibility[], current_date - 95, 'active'),
+   array['orderDelivery', 'orderReturn', 'sheetMovement']::responsibility[], current_date - 95, 'active'),
   -- One inactive, so the roster's Inactive section renders.
   ('e2000000-0000-4000-8000-000000000010', '11111111-1111-1111-1111-111111111111',
    'Tariq Javed', 'machine_worker', 'fixed', 36000, '03009991010', 'Chah Miran, Lahore', '35201-1000010-0', null, null, current_date - 500, 'inactive');
@@ -293,7 +322,7 @@ set status = 'passed', passed_code = 'ALR-1003-R' || repeat_index_in_sheet,
 where order_id = 'd0000000-0000-4000-8000-000000000003' and repeat_index_in_sheet <= 2;
 
 -- Order 4: one returned, the rest passed. Completing the order fires the
--- trigger, which sets stage='coding' and writes the alert the Order Taker sees.
+-- trigger, which sets stage='jobcard' and writes the alert the Order Taker sees.
 -- `inspected_at` is now() so it lands in QA's "Inspected Today".
 update inspection_units
 set status = 'passed', passed_code = 'ALR-1004-R' || repeat_index_in_sheet,
@@ -306,7 +335,7 @@ set status = 'returned', defect_type = 'thread', defect_scope = 'repeat',
     inspected_by = 'aaaaaaa1-0000-4000-8000-000000000002', inspected_at = now()
 where order_id = 'd0000000-0000-4000-8000-000000000004' and repeat_index_in_sheet = 3;
 
--- Orders 5-12: every unit passed, so each reaches stage='coding'.
+-- Orders 5-12: every unit passed, so each reaches stage='jobcard'.
 update inspection_units
 set status = 'passed', passed_code = 'SEED-R' || repeat_index_in_sheet,
     inspected_by = 'aaaaaaa1-0000-4000-8000-000000000002', inspected_at = now() - interval '1 day'
@@ -319,8 +348,8 @@ where order_id in (
 
 -- --- Job cards and floor progress ------------------------------------------
 --
--- Order 5 is left alone: stage='coding' with a null floor_status is exactly the
--- Job Cards tab filter, so it is the order waiting for a job card.
+-- Order 5 is left alone: stage='jobcard' with a null floor_status is exactly
+-- the Job Cards tab filter, so it is the order waiting for a job card.
 
 -- Orders 6-12 have a job card. `billing` is copied from each client's terms,
 -- matching what `submit_order` now does at intake (0010). ALR-1003's client has
@@ -341,9 +370,10 @@ where id in (
   'd0000000-0000-4000-8000-000000000012'
 );
 
--- Each of these fires `sync_stage_from_floor_status`. materialRequested,
--- readyToCollect and machineAssigning keep stage='coding' by design; the two
--- production statuses move it to 'production'.
+-- Each of these fires `sync_stage_from_floor_status`. Since the seven-stage
+-- migration (0013) every floor status has a coarse equivalent: the two material
+-- statuses map to 'materialCollection', machineAssigning to
+-- 'machineAssignment', and the two production statuses to 'production'.
 update orders set floor_status = 'materialRequested'  where id = 'd0000000-0000-4000-8000-000000000006';
 
 update orders set floor_status = 'readyToCollect',
@@ -361,7 +391,13 @@ update orders set floor_status = 'inProduction'       where id in (
 --
 -- Order 9 carries one sheet at each of the four non-final stages, so Production
 -- Detail shows every action button variant at once. Orders 10 and 11 are wholly
--- 'ready', which is what makes them invoiceable and puts them on the Ready tab.
+-- 'ready', which puts them on the Ready tab.
+--
+-- Produced is no longer the same thing as invoiceable: since 0013 an order owes
+-- nothing until `delivered_at` is set, so 10 and 11 sit on the floor's Ready
+-- tab and deliberately do *not* appear on Receivables. That split is the whole
+-- point of the change, and the seed has to show both halves of it — orders 14
+-- and 15 below are the delivered ones.
 update order_sheets set stage = 'producing',     stage_index = 0, stage_records = '[]'::jsonb                                                              where id = 'd1000000-0000-4000-8000-000000000901';
 update order_sheets set stage = 'readyForStage', stage_index = 0, stage_records = '[]'::jsonb                                                              where id = 'd1000000-0000-4000-8000-000000000902';
 update order_sheets set stage = 'stageFormDone', stage_index = 1, stage_records = '[{"key":"clipping","delivery_person":"Faisal Riaz","worker_name":"Yasin Clipping Works"}]'::jsonb where id = 'd1000000-0000-4000-8000-000000000903';
@@ -412,34 +448,107 @@ update orders set
   stages = '{"clipping":true,"piko":true,"press":false}'::jsonb,
   damaged_repeats_price = 0,
   billing = client_billing(client_id),
-  status = 'completed', stage = 'delivery'
+  status = 'completed', stage = 'delivery',
+  -- What `mark_delivered` would have written. Without `delivered_at` this order
+  -- is produced-but-unbilled and never reaches Receivables.
+  delivered_at = now() - interval '16 days',
+  delivery_photo_url = 'seed/placeholder.jpg',
+  delivery_signature_name = 'Bilal Traders'
 where id = 'd0000000-0000-4000-8000-000000000013';
+
+-- 14 and 15. Delivered, so Receivables has a Partially Paid and a Paid row.
+--
+-- These exist because orders 10 and 11 no longer can: those two are produced
+-- and undelivered, which is now a state that owes nothing. Both of these carry
+-- the columns `mark_delivered` writes, and a null `floor_status` — the floor is
+-- done with a delivered order.
+insert into orders (id, factory_id, code, client_id, status, stage, proof_photo_url, created_by, created_at) values
+  ('d0000000-0000-4000-8000-000000000014', '11111111-1111-1111-1111-111111111111', 'ALR-1014',
+   'c2000000-0000-4000-8000-000000000001', 'in_progress', 'inspection', 'seed/placeholder.jpg',
+   'aaaaaaa1-0000-4000-8000-000000000001', now() - interval '14 days'),
+  ('d0000000-0000-4000-8000-000000000015', '11111111-1111-1111-1111-111111111111', 'ALR-1015',
+   'c2000000-0000-4000-8000-000000000001', 'in_progress', 'inspection', 'seed/placeholder.jpg',
+   'aaaaaaa1-0000-4000-8000-000000000001', now() - interval '13 days');
+
+insert into order_sheets (id, order_id, color_id, custom_hex, repeats) values
+  ('d1000000-0000-4000-8000-000000001401', 'd0000000-0000-4000-8000-000000000014', 'red', null, 5),
+  ('d1000000-0000-4000-8000-000000001501', 'd0000000-0000-4000-8000-000000000015', 'blue', null, 4);
+
+update inspection_units
+set status = 'passed', passed_code = 'ALR-1014-R' || repeat_index_in_sheet,
+    inspected_by = 'aaaaaaa1-0000-4000-8000-000000000002', inspected_at = now() - interval '12 days'
+where order_id = 'd0000000-0000-4000-8000-000000000014';
+
+update inspection_units
+set status = 'passed', passed_code = 'ALR-1015-R' || repeat_index_in_sheet,
+    inspected_by = 'aaaaaaa1-0000-4000-8000-000000000002', inspected_at = now() - interval '11 days'
+where order_id = 'd0000000-0000-4000-8000-000000000015';
+
+update order_sheets set stage = 'ready', stage_index = 2,
+  stage_records = '[{"key":"clipping","delivery_person":"Faisal Riaz","worker_name":"Yasin Clipping Works"},{"key":"piko","delivery_person":"Faisal Riaz","worker_name":"Piko Masters"}]'::jsonb
+where order_id in ('d0000000-0000-4000-8000-000000000014','d0000000-0000-4000-8000-000000000015');
+
+update orders set
+  design_code = 'DSN-' || right(code, 4),
+  job_card_code = 'JC-' || right(code, 4),
+  threads = '[{"color_id":"red","stitches":4200}]'::jsonb,
+  needles = '[{"color_id":"red","needle":1,"stitches":4200}]'::jsonb,
+  materials = '[{"color_id":"red","qty_grams":180}]'::jsonb,
+  stages = '{"clipping":true,"piko":true,"press":false}'::jsonb,
+  damaged_repeats_price = 0,
+  billing = client_billing(client_id),
+  stage = 'delivery',
+  delivered_at = now() - interval '4 days',
+  delivery_photo_url = 'seed/placeholder.jpg',
+  delivery_signature_name = 'Received at shop'
+where id in ('d0000000-0000-4000-8000-000000000014','d0000000-0000-4000-8000-000000000015');
 
 -- ---------------------------------------------------------------------------
 -- 4. Financial records
 -- ---------------------------------------------------------------------------
 
--- Invoice payments. Order 10 is part paid (Receivables "Partially Paid"),
--- order 11 is settled in full ("Paid").
+-- Invoice payments. Order 14 is part paid (Receivables "Partially Paid"),
+-- order 15 is settled in full ("Paid").
 --
--- Both clients bill per repeat at 500: order 10 has 5 repeats (2500) and order
--- 11 has 4 (2000). The amounts below are chosen against those totals, so the
+-- These moved off orders 10 and 11 when Receivables started gating on delivery:
+-- a payment against an order the ledger no longer lists is a row nothing can
+-- reach.
+--
+-- Both clients bill per repeat at 500: order 14 has 5 repeats (2500) and order
+-- 15 has 4 (2000). The amounts below are chosen against those totals, so the
 -- remaining balance the app computes is real rather than coincidental.
 insert into invoice_payments (id, order_id, amount, photo_url, recorded_by, paid_at) values
-  ('84000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000010', 1000, 'seed/placeholder.jpg', 'aaaaaaa1-0000-4000-8000-000000000005', now() - interval '2 days'),
-  ('84000000-0000-4000-8000-000000000002', 'd0000000-0000-4000-8000-000000000011', 1200, 'seed/placeholder.jpg', 'aaaaaaa1-0000-4000-8000-000000000005', now() - interval '2 days'),
-  ('84000000-0000-4000-8000-000000000003', 'd0000000-0000-4000-8000-000000000011',  800, 'seed/placeholder.jpg', 'aaaaaaa1-0000-4000-8000-000000000005', now() - interval '1 day'),
+  ('84000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000014', 1000, 'seed/placeholder.jpg', 'aaaaaaa1-0000-4000-8000-000000000005', now() - interval '2 days'),
+  ('84000000-0000-4000-8000-000000000002', 'd0000000-0000-4000-8000-000000000015', 1200, 'seed/placeholder.jpg', 'aaaaaaa1-0000-4000-8000-000000000005', now() - interval '2 days'),
+  ('84000000-0000-4000-8000-000000000003', 'd0000000-0000-4000-8000-000000000015',  800, 'seed/placeholder.jpg', 'aaaaaaa1-0000-4000-8000-000000000005', now() - interval '1 day'),
   ('84000000-0000-4000-8000-000000000004', 'd0000000-0000-4000-8000-000000000013', 1000, 'seed/placeholder.jpg', 'aaaaaaa1-0000-4000-8000-000000000005', now() - interval '15 days');
 
 -- Purchase orders: every `po_status` value present. Only 'confirmed' should
--- reach Accountant's Payables — with all four statuses in the data, that filter
+-- reach Accountant's Payables — with all five statuses in the data, that filter
 -- is actually being tested rather than assumed.
+--
+-- PO-1006 and PO-1007 exist for the Procurement module specifically. Its Queue
+-- lists `manual AND awaitingProcurement`, and PO-1001 is system_generated, so
+-- without 1006 that section renders empty on a full seed — which looks exactly
+-- like a broken query. 1007 is its counterpart on the other side of the
+-- handoff: already priced, so "Submitted This Week" and Store Manager's
+-- confirm screen both have a row.
 insert into purchase_orders (id, factory_id, po_number, status, source, supplier_name, date) values
   ('81000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'PO-1001', 'awaitingProcurement',  'system_generated', null,                now() - interval '10 days'),
   ('81000000-0000-4000-8000-000000000002', '11111111-1111-1111-1111-111111111111', 'PO-1002', 'awaitingConfirmation', 'manual',           'Thread House',      now() - interval '9 days'),
   ('81000000-0000-4000-8000-000000000003', '11111111-1111-1111-1111-111111111111', 'PO-1003', 'confirmed',            'manual',           'Tilla Traders',     now() - interval '8 days'),
   ('81000000-0000-4000-8000-000000000004', '11111111-1111-1111-1111-111111111111', 'PO-1004', 'confirmed',            'manual',           'Sequin Supply Co',  now() - interval '7 days'),
-  ('81000000-0000-4000-8000-000000000005', '11111111-1111-1111-1111-111111111111', 'PO-1005', 'received',             'manual',           'Bobbin Depot',      now() - interval '6 days');
+  ('81000000-0000-4000-8000-000000000005', '11111111-1111-1111-1111-111111111111', 'PO-1005', 'received',             'manual',           'Bobbin Depot',      now() - interval '6 days'),
+  ('81000000-0000-4000-8000-000000000006', '11111111-1111-1111-1111-111111111111', 'PO-1006', 'awaitingProcurement',  'manual',           null,                now() - interval '1 day'),
+  ('81000000-0000-4000-8000-000000000007', '11111111-1111-1111-1111-111111111111', 'PO-1007', 'submitted',            'manual',           null,                now() - interval '2 days');
+
+-- PO-1007's bill, as `submit_procurement_bill` would have written it.
+update purchase_orders set
+  actual_supplier_id = (select id from suppliers where id = '51000000-0000-4000-8000-000000000001'),
+  bill_photo_url = 'seed/placeholder.jpg',
+  submitted_at = now() - interval '1 day',
+  submitted_by = 'aaaaaaa1-0000-4000-8000-000000000004'
+where id = '81000000-0000-4000-8000-000000000007';
 
 insert into po_items (id, purchase_order_id, stock_item_id, qty, price) values
   ('82000000-0000-4000-8000-000000000001', '81000000-0000-4000-8000-000000000001', '71000000-0000-4000-8000-000000000003', 2000, 4000),
@@ -447,6 +556,21 @@ insert into po_items (id, purchase_order_id, stock_item_id, qty, price) values
   ('82000000-0000-4000-8000-000000000003', '81000000-0000-4000-8000-000000000003', '71000000-0000-4000-8000-000000000006', 1200, 6000),
   ('82000000-0000-4000-8000-000000000004', '81000000-0000-4000-8000-000000000004', '71000000-0000-4000-8000-000000000009',   30, 4500),
   ('82000000-0000-4000-8000-000000000005', '81000000-0000-4000-8000-000000000005', '71000000-0000-4000-8000-000000000010',  900, 1800);
+
+-- PO-1006: unpriced, which is the whole point — this is what Procurement's
+-- Fulfill screen is for. One line carries a recommended supplier so the
+-- "Recommend: ..." sub-line and the never-pre-select rule can both be seen.
+insert into po_items (id, purchase_order_id, stock_item_id, qty, price, recommended_supplier_id) values
+  ('82000000-0000-4000-8000-000000000006', '81000000-0000-4000-8000-000000000006', '71000000-0000-4000-8000-000000000001', 1000, null, '51000000-0000-4000-8000-000000000001'),
+  ('82000000-0000-4000-8000-000000000007', '81000000-0000-4000-8000-000000000006', '71000000-0000-4000-8000-000000000009',   12, null, null);
+
+-- PO-1007: priced, plus one line bought beyond the request, so Store Manager's
+-- confirm screen has an `is_additional` row to distinguish.
+insert into po_items (id, purchase_order_id, stock_item_id, qty, price) values
+  ('82000000-0000-4000-8000-000000000008', '81000000-0000-4000-8000-000000000007', '71000000-0000-4000-8000-000000000003', 1500, 3200);
+
+insert into po_items (id, purchase_order_id, stock_item_id, qty, price, item_type, color_id, is_additional) values
+  ('82000000-0000-4000-8000-000000000009', '81000000-0000-4000-8000-000000000007', null, 500, 1100, 'thread', 'green', true);
 
 -- PO-1003 part paid (6000 billed, 2500 paid); PO-1004 settled in full.
 insert into po_payments (id, purchase_order_id, amount, photo_url, recorded_by, paid_at) values

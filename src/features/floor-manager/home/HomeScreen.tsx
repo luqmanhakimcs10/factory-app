@@ -53,7 +53,7 @@ function pillFor(order: FmOrder): { status: PillStatus; label: string } {
     const entry = STATUS_LABELS[order.floor_status];
     if (entry) return { status: entry.pill, label: entry.label };
   }
-  if (order.stage === 'coding') return { status: 'completed', label: 'Ready for Job Card' };
+  if (order.stage === 'jobcard') return { status: 'completed', label: 'Ready for Job Card' };
   return { status: 'progress', label: 'In Progress' };
 }
 
