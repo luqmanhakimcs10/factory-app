@@ -21,6 +21,14 @@ export const BUCKETS = {
   employeeDocs: 'employee-docs',
   /** Procurement: the supplier bill photographed at submission. */
   billPhotos: 'bill-photos',
+  /**
+   * Delivery Person: proof of handoff, of collection, of delivery, of return.
+   *
+   * One bucket for all four because they share a tenant boundary and a
+   * lifetime; which column a path lands in is decided by the RPC that records
+   * it, never by the file's name. See `0016_staff_photos.sql`.
+   */
+  staffProofPhotos: 'staff-proof-photos',
   /** Super Admin: per-tenant CNIC photos. Written by the platform operator. */
   factoryDocs: 'factory-docs',
 } as const;

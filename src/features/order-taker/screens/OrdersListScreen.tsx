@@ -27,11 +27,22 @@ const EMPTY_COPY: Record<OrderFilter, { title: string; hint: string }> = {
   completed: { title: 'Nothing completed yet', hint: 'Orders land here once they clear delivery.' },
 };
 
-/** Order-taker home: the queue of this factory's orders. */
-export function OrdersListScreen({ navigation }: Props) {
+/**
+ * The order taker's queue of this factory's orders.
+ *
+ * **Two entry paths, one screen.** Order Taking is a grant now, so this is
+ * reached from the Staff Dashboard and gets a back bar — from there, "home" is
+ * the Dashboard, not this list. A legacy dedicated `order_taker` login lands
+ * here too, but through the Dashboard as well, so in practice the back bar is
+ * what shows; the home-header branch stays for any route that mounts this stack
+ * as a root. The variant is a route param rather than a second copy of the
+ * screen, because everything below the header is identical.
+ */
+export function OrdersListScreen({ navigation, route }: Props) {
   const profile = useSession((state) => state.profile);
   const resetWizard = useWizard((state) => state.reset);
   const [filter, setFilter] = useState<OrderFilter>('all');
+  const cameFromDashboard = route.params?.cameFromDashboard ?? false;
 
   const factoryId = profile?.factory_id;
   const profileId = profile?.id;
@@ -51,7 +62,11 @@ export function OrdersListScreen({ navigation }: Props) {
 
   return (
     <View style={styles.screen}>
-      <TopBar variant="home" onPressNotifications={() => {}} />
+      {cameFromDashboard ? (
+        <TopBar variant="bar" title="Order Taking" onPressBack={navigation.goBack} />
+      ) : (
+        <TopBar variant="home" onPressNotifications={() => {}} />
+      )}
 
       <View style={styles.tabs}>
         {FILTERS.map((entry) => {

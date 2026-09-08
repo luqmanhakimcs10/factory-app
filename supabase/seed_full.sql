@@ -90,6 +90,12 @@ delete from subscription_payments where id::text like '8c000000-%';
 -- explicitly so a partially-applied previous run cannot leave orphans.
 delete from inspection_units where order_id::text like 'd0000000-%';
 delete from order_sheets     where order_id::text like 'd0000000-%';
+
+-- Return requests reference orders without a cascade, so they have to go first
+-- or the order delete below fails on the foreign key. Their sheet rows do
+-- cascade from the request.
+delete from return_requests  where order_id::text like 'd0000000-%';
+delete from movements        where order_id::text like 'd0000000-%';
 delete from orders           where id::text like 'd0000000-%';
 
 -- Movements point at finishing partners as well as at orders. The order-scoped
@@ -138,6 +144,12 @@ update profiles set role = 'accountant',    full_name = 'Accountant A'     where
 update profiles set role = 'worker',        full_name = 'Imran Ali'        where id = 'aaaaaaa1-0000-4000-8000-000000000006';
 update profiles set role = 'company_admin', full_name = 'Company Admin A'  where id = 'aaaaaaa1-0000-4000-8000-000000000007';
 update profiles set is_platform_admin = true                               where id = 'aaaaaaa1-0000-4000-8000-000000000008';
+--   delivery.a@example.com  aaaaaaa1-0000-4000-8000-000000000009  delivery_person
+--
+-- The unified staff persona. Its capabilities are the grants on the employee
+-- row seed.sql links to it, not this role — the role only decides that it lands
+-- on the Staff Dashboard at all.
+update profiles set role = 'delivery_person', full_name = 'Imran Ali'      where id = 'aaaaaaa1-0000-4000-8000-000000000009';
 
 -- ---------------------------------------------------------------------------
 -- 2. Master data
@@ -200,13 +212,18 @@ insert into employees (id, factory_id, name, role, salary_basis, salary_amount, 
 
 -- Finishing partners: one per stage. `rate_basis` has a single value today and
 -- the edit screen renders it read-only, so every row carries 'per_repeat'.
-insert into finishing_partners (id, factory_id, name, stage_type, rate_basis, rate, contact, address, cnic, status) values
+--
+-- `sla_hours` differs per partner on purpose. It is the agreed turnaround a
+-- movement snapshots at drop-off, and the SLA strip's amber and red bands are
+-- fixed hours rather than a fraction of it — so a 12-hour partner and a 48-hour
+-- one are what prove the strip is reading the movement's own copy.
+insert into finishing_partners (id, factory_id, name, stage_type, rate_basis, rate, contact, address, cnic, sla_hours, status) values
   ('f1000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111',
-   'Yasin Clipping Works', 'clipping', 'per_repeat', 18, '03004441001', 'Misri Shah, Lahore', '35202-2000001-1', 'active'),
+   'Yasin Clipping Works', 'clipping', 'per_repeat', 18, '03004441001', 'Misri Shah, Lahore', '35202-2000001-1', 24, 'active'),
   ('f1000000-0000-4000-8000-000000000002', '11111111-1111-1111-1111-111111111111',
-   'Piko Masters', 'piko', 'per_repeat', 25, '03004441002', 'Shad Bagh, Lahore', '35202-2000002-2', 'active'),
+   'Piko Masters', 'piko', 'per_repeat', 25, '03004441002', 'Shad Bagh, Lahore', '35202-2000002-2', 12, 'active'),
   ('f1000000-0000-4000-8000-000000000003', '11111111-1111-1111-1111-111111111111',
-   'Al-Noor Press House', 'press', 'per_repeat', 12, '03004441003', 'Bilal Ganj, Lahore', '35202-2000003-3', 'inactive');
+   'Al-Noor Press House', 'press', 'per_repeat', 12, '03004441003', 'Bilal Ganj, Lahore', '35202-2000003-3', 48, 'inactive');
 
 -- Bonus slabs, deliberately inserted out of order. The screen is specified to
 -- sort ascending by threshold; inserting 15000 first is what proves it does
@@ -661,3 +678,100 @@ update factories set
   starting_date = coalesce(starting_date, current_date - 90),
   due_date = coalesce(due_date, current_date + 275)
 where id = '11111111-1111-1111-1111-111111111111';
+
+-- ---------------------------------------------------------------------------
+-- 8. Sheets in motion
+--
+-- The Delivery Person module's own data: where repeats physically are, and
+-- which of them have to go back to a client.
+--
+-- Repeat codes are derived rather than stored — `repeatCodes()` builds them
+-- from the order code and the sheet's position as
+-- `{code suffix}-{sheet index + 1}.{repeat}` — so the literals here have to
+-- match that format or the chips will not line up with anything the rest of the
+-- app draws.
+--
+-- Timestamps are relative to `now()` for the same reason the SLA strip computes
+-- rather than stores its state: a fixed `sent_at` would read LATE within a day
+-- of seeding and the amber and red bands would never be visible again.
+-- ---------------------------------------------------------------------------
+
+insert into movements (
+  id, factory_id, finishing_partner_id, order_id, stage, codes, status,
+  sla_hours, sent_at, returned_at, damaged_count, drop_off_photo_url, pickup_photo_url, created_by
+) values
+  -- Two waiting to go out, so the Drop-off tab has a queue rather than one row.
+  ('10000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111',
+   'f1000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000006',
+   'clipping', array['1006-1.1', '1006-1.2', '1006-1.3'], 'ready',
+   24, null, null, 0, null, null, 'aaaaaaa1-0000-4000-8000-000000000009'),
+  ('10000000-0000-4000-8000-000000000002', '11111111-1111-1111-1111-111111111111',
+   'f1000000-0000-4000-8000-000000000002', 'd0000000-0000-4000-8000-000000000007',
+   'piko', array['1007-1.1', '1007-1.2'], 'ready',
+   12, null, null, 0, null, null, 'aaaaaaa1-0000-4000-8000-000000000009'),
+
+  -- Three at a partner, one in each SLA band. 24h SLA sent 2h ago is
+  -- comfortable; 12h sent 8h ago has 4 hours left, which is red; 24h sent 30h
+  -- ago is past its deadline and reads LATE.
+  ('10000000-0000-4000-8000-000000000003', '11111111-1111-1111-1111-111111111111',
+   'f1000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000008',
+   'clipping', array['1008-1.1', '1008-1.2'], 'atPartner',
+   24, now() - interval '2 hours', null, 0, 'seed/placeholder.jpg', null,
+   'aaaaaaa1-0000-4000-8000-000000000009'),
+  ('10000000-0000-4000-8000-000000000004', '11111111-1111-1111-1111-111111111111',
+   'f1000000-0000-4000-8000-000000000002', 'd0000000-0000-4000-8000-000000000009',
+   'piko', array['1009-1.1', '1009-1.2', '1009-1.3'], 'atPartner',
+   12, now() - interval '8 hours', null, 0, 'seed/placeholder.jpg', null,
+   'aaaaaaa1-0000-4000-8000-000000000009'),
+  ('10000000-0000-4000-8000-000000000005', '11111111-1111-1111-1111-111111111111',
+   'f1000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000012',
+   'clipping', array['1012-1.1'], 'atPartner',
+   24, now() - interval '30 hours', null, 0, 'seed/placeholder.jpg', null,
+   'aaaaaaa1-0000-4000-8000-000000000009'),
+
+  -- Two collected: one clean, one with damage, so the Collected tab shows both
+  -- summary lines it can produce.
+  ('10000000-0000-4000-8000-000000000006', '11111111-1111-1111-1111-111111111111',
+   'f1000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000010',
+   'clipping', array['1010-1.1', '1010-1.2', '1010-1.3'], 'returned',
+   24, now() - interval '4 days', now() - interval '3 days', 0,
+   'seed/placeholder.jpg', 'seed/placeholder.jpg', 'aaaaaaa1-0000-4000-8000-000000000009'),
+  ('10000000-0000-4000-8000-000000000007', '11111111-1111-1111-1111-111111111111',
+   'f1000000-0000-4000-8000-000000000002', 'd0000000-0000-4000-8000-000000000011',
+   'piko', array['1011-1.1', '1011-1.2'], 'returned',
+   12, now() - interval '3 days', now() - interval '2 days', 1,
+   'seed/placeholder.jpg', 'seed/placeholder.jpg', 'aaaaaaa1-0000-4000-8000-000000000009');
+
+-- Returns. Inspection raises these itself now, in the same transaction as the
+-- order's alert banner — this seed never runs an inspection, so both halves are
+-- written here by hand, and they have to stay in step: `confirm_return` clears
+-- the banner only when no pending request is left on that order.
+insert into return_requests (id, factory_id, order_id, status, raised_at, returned_at, return_photo_url, created_by) values
+  ('12000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111',
+   'd0000000-0000-4000-8000-000000000004', 'pending', now() - interval '2 days', null, null,
+   'aaaaaaa1-0000-4000-8000-000000000002'),
+  ('12000000-0000-4000-8000-000000000002', '11111111-1111-1111-1111-111111111111',
+   'd0000000-0000-4000-8000-000000000005', 'pending', now() - interval '1 day', null, null,
+   'aaaaaaa1-0000-4000-8000-000000000002'),
+  -- Already back with the client, so the Returned section is not empty.
+  ('12000000-0000-4000-8000-000000000003', '11111111-1111-1111-1111-111111111111',
+   'd0000000-0000-4000-8000-000000000013', 'returned', now() - interval '18 days',
+   now() - interval '17 days', 'seed/placeholder.jpg',
+   'aaaaaaa1-0000-4000-8000-000000000002');
+
+-- Defect types span Inspection's vocabulary rather than repeating one value:
+-- the Raise Return card reads `defect_type` through Inspection's own
+-- `defectTypeLabel`, and one value everywhere would not show that.
+insert into return_request_sheets (id, return_request_id, repeat_code, defect_type, flagged_by) values
+  ('13000000-0000-4000-8000-000000000001', '12000000-0000-4000-8000-000000000001', '1004-1.2', 'stain',      'aaaaaaa1-0000-4000-8000-000000000002'),
+  ('13000000-0000-4000-8000-000000000002', '12000000-0000-4000-8000-000000000001', '1004-1.3', 'hole',       'aaaaaaa1-0000-4000-8000-000000000002'),
+  ('13000000-0000-4000-8000-000000000003', '12000000-0000-4000-8000-000000000002', '1005-1.1', 'misalign',   'aaaaaaa1-0000-4000-8000-000000000002'),
+  ('13000000-0000-4000-8000-000000000004', '12000000-0000-4000-8000-000000000003', '1013-1.1', 'wrongcolor', 'aaaaaaa1-0000-4000-8000-000000000002');
+
+-- The banners those pending requests are paired with. Orders 4 and 5 keep an
+-- alert until their return is confirmed; order 13's was cleared when its return
+-- came back, which is the state `confirm_return` leaves behind.
+update orders set alert_text = '2 repeats returned by QA — take them back to the client.'
+where id = 'd0000000-0000-4000-8000-000000000004';
+update orders set alert_text = '1 repeat returned by QA — take it back to the client.'
+where id = 'd0000000-0000-4000-8000-000000000005';

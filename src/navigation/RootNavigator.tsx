@@ -20,13 +20,20 @@ import { SuperAdminStack } from './SuperAdminStack';
  * read-only. RLS is the backstop for that rule, not the mechanism.
  *
  * Roles map onto the order lifecycle as follows:
- *   order_taker    intake, before `stage = 'inspection'`
+ *   staff          intake, procurement, and everything that physically moves:
+ *                  sheets out to a finishing partner and back, the order out to
+ *                  the client, damaged repeats back again. One login whose
+ *                  capabilities are grants rather than a role, so what it can
+ *                  reach differs per person — see `features/staff/grants.ts`.
+ *                  `order_taker`, `procurement` and `delivery_person` all land
+ *                  here too; the first two hold one implied grant apiece.
  *   qa_person      `stage = 'inspection'`
  *   floor_manager  `stage = 'jobcard'` through `'production'`
  *   store_manager  the `materialRequested -> readyToCollect` handoff, plus stock
  *   accountant     money: invoices once an order is delivered, confirmed bills,
  *                  payroll, loans read-only, expenses raised for approval
- * Everything from `finishing` onward belongs to roles that do not exist yet.
+ * The one role still without a module is `worker`, who is payroll rather than a
+ * user; `finishing_partner` has no login at all.
  *
  * The map itself lives in `roleStacks.ts` because the fallback screen reads it
  * too — that is what stops the "currently covers ..." copy from naming a

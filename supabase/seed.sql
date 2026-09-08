@@ -60,7 +60,7 @@ on conflict (id) do nothing;
 
 -- Auth users. Inserting straight into auth.users is a local-only shortcut; in
 -- a real environment these come from the sign-up flow.
--- Password for all three: `password123`.
+-- Password for every account below: `password123`.
 --
 -- The empty-string token columns are not decoration: GoTrue reads them into Go
 -- `string` fields, which cannot hold NULL, and a raw insert that leaves them
@@ -103,6 +103,12 @@ values
   ('aaaaaaa1-0000-4000-8000-000000000008', '00000000-0000-0000-0000-000000000000',
    'authenticated', 'authenticated', 'super.a@example.com',
    crypt('password123', gen_salt('bf')), now(), now(), now(),
+   '{"provider":"email","providers":["email"]}', '{}', '', '', '', ''),
+  -- The unified staff persona. What this account can do comes from the grants
+  -- on its `employees` row, not from its role — see the employee insert below.
+  ('aaaaaaa1-0000-4000-8000-000000000009', '00000000-0000-0000-0000-000000000000',
+   'authenticated', 'authenticated', 'delivery.a@example.com',
+   crypt('password123', gen_salt('bf')), now(), now(), now(),
    '{"provider":"email","providers":["email"]}', '{}', '', '', '', '')
 on conflict (id) do nothing;
 
@@ -125,7 +131,8 @@ where u.id in (
   'aaaaaaa1-0000-4000-8000-000000000005',
   'aaaaaaa1-0000-4000-8000-000000000006',
   'aaaaaaa1-0000-4000-8000-000000000007',
-  'aaaaaaa1-0000-4000-8000-000000000008'
+  'aaaaaaa1-0000-4000-8000-000000000008',
+  'aaaaaaa1-0000-4000-8000-000000000009'
 )
 and not exists (
   select 1 from auth.identities i where i.user_id = u.id and i.provider = 'email'
@@ -140,8 +147,35 @@ insert into profiles (id, factory_id, role, full_name) values
   -- A payroll subject. Workers do not sign in yet, but salary and loans key on
   -- a profile row.
   ('aaaaaaa1-0000-4000-8000-000000000006', '11111111-1111-1111-1111-111111111111', 'worker',        'Imran Ali'),
-  ('aaaaaaa1-0000-4000-8000-000000000007', '11111111-1111-1111-1111-111111111111', 'company_admin', 'Company Admin A')
+  ('aaaaaaa1-0000-4000-8000-000000000007', '11111111-1111-1111-1111-111111111111', 'company_admin', 'Company Admin A'),
+  ('aaaaaaa1-0000-4000-8000-000000000009', '11111111-1111-1111-1111-111111111111', 'delivery_person', 'Imran Ali')
 on conflict (id) do nothing;
+
+-- The grants that make the delivery person's dashboard render.
+--
+-- `profiles.role` gets this account as far as the Staff Dashboard and no
+-- further: every card on it, and every RPC behind those cards, is gated on
+-- `has_grant()`, which reads this row. Without it the same login signs in to an
+-- empty dashboard — which is the correct behaviour, and is what an employee
+-- with no responsibilities set is supposed to see.
+--
+-- All five are granted here because the source mockup's example person holds
+-- all five, and that combination is also the one worth testing: it is the only
+-- one that triggers the separation-of-duties note (buying material and moving
+-- it are held by the same person).
+insert into employees (
+  id, factory_id, name, role, salary_basis, salary_amount,
+  contact, address, cnic, responsibilities, profile_id, join_date, status
+) values
+  ('e1111111-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111',
+   'Imran Ali', 'delivery', 'fixed', 34000,
+   '03009991009', 'Bund Road, Lahore', '35201-1000009-9',
+   array['orderTaking', 'orderReturn', 'orderDelivery', 'procurePo', 'sheetMovement']::responsibility[],
+   'aaaaaaa1-0000-4000-8000-000000000009', current_date - 95, 'active')
+on conflict (id) do update
+set responsibilities = excluded.responsibilities,
+    profile_id = excluded.profile_id,
+    status = 'active';
 
 -- The platform operator. Routing keys off `is_platform_admin`, never off this
 -- role value — `super_admin` has no entry in RootNavigator's role map, so a
@@ -295,3 +329,97 @@ update po_items set price = qty * 0.9 where price = 0;
 update purchase_orders
 set status = 'confirmed'
 where id = 'e1000000-0000-4000-8000-000000000002';
+
+-- ---------------------------------------------------------------------------
+-- Delivery Person test data
+--
+-- Three things the module needs before any of its screens have anything to
+-- show: a finishing partner to hand sheets to, movements in each of the three
+-- states, and an order that has actually finished production so the Delivery
+-- Queue is not empty.
+--
+-- Repeat codes are derived, never stored — `repeatCodes()` builds them from the
+-- order code and the sheet's position, so the literals below have to match that
+-- format exactly: `{code suffix}-{sheet index + 1}.{repeat}`.
+-- ---------------------------------------------------------------------------
+
+-- Same two ids `seed_full.sql` uses, deliberately. That file clears and rebuilds
+-- everything under `f1000000-%`, so sharing the ids means the wide dataset
+-- replaces these partners rather than adding a second "Yasin Clipping Works"
+-- beside them on Company Admin's roster.
+insert into finishing_partners (
+  id, factory_id, name, stage_type, rate_basis, rate, contact, address, cnic, sla_hours, status
+) values
+  ('f1000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111',
+   'Yasin Clipping Works', 'clipping', 'per_repeat', 18,
+   '03004441001', 'Misri Shah, Lahore', '35202-2000001-1', 24, 'active'),
+  ('f1000000-0000-4000-8000-000000000002', '11111111-1111-1111-1111-111111111111',
+   'Piko Masters', 'piko', 'per_repeat', 25,
+   '03004441002', 'Shad Bagh, Lahore', '35202-2000002-2', 12, 'active')
+on conflict (id) do update set sla_hours = excluded.sla_hours;
+
+-- A second order, fully produced, so Order Delivery has something ready to go.
+-- Every sheet at `stage = 'ready'` and `delivered_at` still null is exactly the
+-- condition the Delivery Queue's "Ready to Deliver" section filters on.
+insert into orders (id, factory_id, code, client_id, status, stage, created_by) values
+  ('01111111-0000-4000-8000-000000000002', '11111111-1111-1111-1111-111111111111',
+   'ARE-0002', 'c1111111-0000-4000-8000-000000000001', 'in_progress', 'finishing',
+   'aaaaaaa1-0000-4000-8000-000000000009')
+on conflict (id) do nothing;
+
+insert into order_sheets (id, order_id, color_id, repeats, stage) values
+  ('51111111-0000-4000-8000-000000000003', '01111111-0000-4000-8000-000000000002', 'green', 2, 'ready'),
+  ('51111111-0000-4000-8000-000000000004', '01111111-0000-4000-8000-000000000002', 'yellow',  2, 'ready')
+on conflict (id) do update set stage = excluded.stage;
+
+-- One movement per status, so all three Move Hub tabs render.
+--
+-- The `atPartner` row was dropped off 8 hours ago against a 12-hour SLA, so it
+-- has 4 hours left and sits in the red band. Written relative to `now()` rather
+-- than as a fixed timestamp: the SLA strip computes from `sent_at + sla_hours`
+-- against the clock, and a literal would read LATE within a day of seeding and
+-- never show another state again.
+insert into movements (
+  id, factory_id, finishing_partner_id, order_id, stage, codes, status,
+  sla_hours, sent_at, returned_at, damaged_count, created_by
+) values
+  ('11111111-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111',
+   'f1000000-0000-4000-8000-000000000001', '01111111-0000-4000-8000-000000000002',
+   'clipping', array['0002-1.1', '0002-1.2'], 'ready',
+   24, null, null, 0, 'aaaaaaa1-0000-4000-8000-000000000009'),
+  ('11111111-0000-4000-8000-000000000002', '11111111-1111-1111-1111-111111111111',
+   'f1000000-0000-4000-8000-000000000002', '01111111-0000-4000-8000-000000000002',
+   'piko', array['0002-2.1', '0002-2.2'], 'atPartner',
+   12, now() - interval '8 hours', null, 0, 'aaaaaaa1-0000-4000-8000-000000000009'),
+  ('11111111-0000-4000-8000-000000000003', '11111111-1111-1111-1111-111111111111',
+   'f1000000-0000-4000-8000-000000000001', '01111111-0000-4000-8000-000000000001',
+   'clipping', array['0001-1.1', '0001-1.2', '0001-1.3'], 'returned',
+   24, now() - interval '3 days', now() - interval '2 days', 1,
+   'aaaaaaa1-0000-4000-8000-000000000009')
+on conflict (id) do nothing;
+
+-- A pending return, so the Return Queue has a job in it.
+--
+-- Inspection raises these itself now (0013's `on_inspection_unit_decided`
+-- trigger), alongside the order's alert banner. Seeded directly here because
+-- the seed never runs an inspection.
+insert into return_requests (id, factory_id, order_id, status, created_by) values
+  ('12111111-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111',
+   '01111111-0000-4000-8000-000000000001', 'pending',
+   'aaaaaaa1-0000-4000-8000-000000000002')
+on conflict (id) do nothing;
+
+insert into return_request_sheets (id, return_request_id, repeat_code, defect_type, flagged_by) values
+  ('13111111-0000-4000-8000-000000000001', '12111111-0000-4000-8000-000000000001',
+   '0001-1.2', 'stain', 'aaaaaaa1-0000-4000-8000-000000000002'),
+  ('13111111-0000-4000-8000-000000000002', '12111111-0000-4000-8000-000000000001',
+   '0001-2.1', 'misalign', 'aaaaaaa1-0000-4000-8000-000000000002')
+on conflict (id) do nothing;
+
+-- The banner the return request is paired with. `confirm_return` clears this
+-- once nothing on the order is still outstanding, which is what proves the two
+-- objects are linked rather than merely both present.
+update orders
+set alert_text = '2 repeats returned by QA — take them back to the client.'
+where id = '01111111-0000-4000-8000-000000000001'
+  and alert_text is null;

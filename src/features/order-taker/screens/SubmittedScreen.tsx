@@ -20,7 +20,11 @@ export function SubmittedScreen({ navigation, route }: Props) {
   const backToOrders = useCallback(() => {
     // Third and last reset point, alongside the FAB and a successful submit.
     resetWizard();
-    navigation.navigate('OrdersList');
+    // `popToTop`, not `navigate`: Orders List is already at the bottom of this
+    // stack with the params it was opened on, and navigating would re-enter it
+    // with none — losing `cameFromDashboard` and putting a home header on a
+    // screen the person reached from the Staff Dashboard.
+    navigation.popToTop();
   }, [navigation, resetWizard]);
 
   // Terminal screen: there is no back button, and Android's hardware back is

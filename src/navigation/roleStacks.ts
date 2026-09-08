@@ -3,8 +3,7 @@ import { AccountantStack } from './AccountantStack';
 import { CompanyAdminStack } from './CompanyAdminStack';
 import { FloorManagerStack } from './FloorManagerStack';
 import { InspectionStack } from './InspectionStack';
-import { OrderTakerStack } from './OrderTakerStack';
-import { ProcurementStack } from './ProcurementStack';
+import { StaffStack } from './StaffStack';
 import { StoreManagerTabs } from './StoreManagerStack';
 
 /**
@@ -42,15 +41,25 @@ export const ROLE_LABELS: Record<UserRole, string> = {
  * tenant boundary and is gated on `profiles.is_platform_admin` before this map
  * is consulted at all; a profile carrying that role without the flag falls
  * through to the fallback rather than into anybody's factory.
+ *
+ * Four roles share `StaffStack`, and that is the point of it. Order Taking and
+ * Procurement stopped being modules of their own: they are grants now, and the
+ * Staff Dashboard is the root that opens them. A dedicated `order_taker` or
+ * `procurement` login still signs in and still reaches the same screens — it
+ * lands on the Dashboard first, holding the single grant its role implies (see
+ * `features/staff/grants.ts`), which is the same one card its module root used
+ * to be. Nothing was taken away from those accounts; the way in moved.
  */
 export const ROLE_STACKS: Partial<Record<UserRole, React.ComponentType>> = {
-  order_taker: OrderTakerStack,
   qa_person: InspectionStack,
   floor_manager: FloorManagerStack,
   store_manager: StoreManagerTabs,
   accountant: AccountantStack,
   company_admin: CompanyAdminStack,
-  procurement: ProcurementStack,
+  delivery_person: StaffStack,
+  staff: StaffStack,
+  order_taker: StaffStack,
+  procurement: StaffStack,
 };
 
 /** Roles that have a module, in the order they appear in `ROLE_STACKS`. */

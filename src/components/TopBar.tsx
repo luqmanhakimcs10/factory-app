@@ -26,6 +26,18 @@ interface HomeTopBarProps {
    * go missing from four modules twice.
    */
   showSignOut?: boolean;
+  /**
+   * Replaces the role label on the second line.
+   *
+   * Exactly one caller has a reason to pass this: the Staff Dashboard, whose
+   * header reads "DELIVERY PERSON · IMRAN ALI" because that role's capabilities
+   * are granted per person rather than fixed per role, so the role alone does
+   * not describe what the account can do. Every other module leaves it unset —
+   * a prop that overrides the role label is exactly how five roots drifted into
+   * five hardcoded labels before, and this one is documented so it cannot
+   * happen quietly a second time.
+   */
+  subtitle?: string;
 }
 
 interface BarTopBarProps {
@@ -76,7 +88,7 @@ export function TopBar(props: TopBarProps) {
                 {factoryName ?? 'My Factory'}
               </Text>
               <Text style={styles.role} numberOfLines={1}>
-                {profile ? ROLE_LABELS[profile.role].toUpperCase() : ''}
+                {(props.subtitle ?? (profile ? ROLE_LABELS[profile.role] : '')).toUpperCase()}
               </Text>
             </View>
             {props.onPressNotifications ? (

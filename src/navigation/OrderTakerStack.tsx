@@ -18,9 +18,14 @@ import { SubmittedScreen } from '../features/order-taker/screens/SubmittedScreen
  * -> SheetForm (loops per sheet) -> DesignSheet -> Review -> Submitted.
  * New Client is a sub-step of Pick Client and shares its progress dot, so the
  * indicator has six dots across ten screens.
+ *
+ * `OrdersList` takes `cameFromDashboard` because this stack is not a module
+ * root any more — it is nested inside `StaffStack`, and the person who opened
+ * it has a Dashboard to go back to. The flag drives the header variant only;
+ * everything below it is the same screen either way.
  */
 export type OrderTakerStackParamList = {
-  OrdersList: undefined;
+  OrdersList: { cameFromDashboard?: boolean } | undefined;
   OrderDetail: { orderId: string };
   PickClient: undefined;
   NewClient: undefined;

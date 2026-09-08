@@ -4,8 +4,10 @@ React Native (Expo) app for **Al-Rehman Embroidery** — a multi-tenant embroide
 Factory-floor staff use this on phones; there is no web client.
 
 Built so far: the foundation (scaffold, theme, shared components, Supabase schema + RLS, storage),
-the **Order Taker**, **QA Initial Inspection** and **Floor Manager** modules. Delivery, and the
-Store Manager role the Floor Manager hands off to, have no screens yet.
+and every module — **QA Initial Inspection**, **Floor Manager**, **Store Manager**, **Accountant**,
+**Company Admin**, the **Super Admin** platform console, and the **Delivery Person** persona that
+now owns Order Taking, Procurement, sheet movement, delivery and returns as grants rather than as
+separate logins.
 
 ## Setup
 
@@ -305,8 +307,25 @@ trigger created them when a sheet was inserted, so the unit count can never drif
 
 ### Verifying RLS
 
-`supabase/seed.sql` sets up one factory — Al-Rehman Embroidery — with an order taker, a QA person
-and a floor manager (`taker.a@`, `qa.a@`, `floor.a@example.com`, all `password123`). The second
+`supabase/seed.sql` sets up one factory — Al-Rehman Embroidery — with one login per role, all on
+`password123`:
+
+| Email | Role | Lands on |
+| --- | --- | --- |
+| `delivery.a@example.com` | `delivery_person` | Staff Dashboard, all five grants |
+| `taker.a@example.com` | `order_taker` | Staff Dashboard, `orderTaking` only |
+| `qa.a@example.com` | `qa_person` | Inspection queue |
+| `floor.a@example.com` | `floor_manager` | Floor Manager dashboard |
+| `store.a@example.com` | `store_manager` | Store Manager tabs |
+| `accounts.a@example.com` | `accountant` | Ledgers |
+| `admin.a@example.com` | `company_admin` | Company Admin dashboard |
+| `super.a@example.com` | platform admin | Platform console |
+| `worker.a@example.com` | `worker` | Placeholder — workers are payroll, not users |
+
+`delivery.a@` holds all five responsibilities, which is also the only combination that triggers the
+separation-of-duties note (the same person requests material and buys it). Clear grants on that
+employee in Company Admin to see the empty-dashboard state. `supabase/seed_full.sql` layers a wider
+dataset on top — same logins, more orders, movements in every SLA band. The second
 tenant the isolation check needs is created inside `rls_smoke.sql` itself and discarded by its
 closing `ROLLBACK`, so no second factory or extra logins linger in the database. Run it with:
 
@@ -599,13 +618,19 @@ src/
   lib/           ledgerMath.ts — every money formula, defined once
   state/         session store (Zustand) + launch-time session restore
   features/      auth/         minimal email/password sign-in
+                 staff/        the unified persona: dashboard, grants, sheet movement,
+                               delivery, returns
                  order-taker/  the ten-screen wizard, its store and its queries
+                 procurement/  PO queue, fulfil, submitted
                  inspection/   the QA queue, per-unit review loop and its session store
                  store-manager/ stock, purchase orders, the issue handoff, audits
                  accountant/   receivables, payables, payroll, loans, expenses, stats
                  floor-manager/ dashboard, six-tab home, job card, inventory, machines, production
-  navigation/    RootNavigator plus the Order Taker, Inspection, Floor Manager and
-                 Store Manager stacks
+                 company-admin/ master data, approvals, reports
+                 super-admin/  the cross-tenant platform console
+  navigation/    RootNavigator plus the Staff, Inspection, Floor Manager, Store Manager,
+                 Accountant, Company Admin and Super Admin stacks. Order Taker and
+                 Procurement are nested inside Staff rather than routed to directly.
 ```
 
 ## Routing
@@ -615,12 +640,42 @@ thing that does — see [RootNavigator.tsx](src/navigation/RootNavigator.tsx).
 
 | Role | Lands on | Owns which part of the order lifecycle |
 | --- | --- | --- |
-| `order_taker` | Orders list | Intake, up to `stage = 'inspection'` |
+| `staff` / `delivery_person` | Staff Dashboard | Intake, procurement, and everything that physically moves — see below |
+| `order_taker` | Staff Dashboard | Intake, up to `stage = 'inspection'` |
+| `procurement` | Staff Dashboard | Turning a manual PO with quantities into one with prices and a bill |
 | `qa_person` | Inspection queue | `stage = 'inspection'` |
-| `floor_manager` | Dashboard | `stage = 'coding'` through `'production'` |
+| `floor_manager` | Dashboard | `stage = 'jobcard'` through `'production'` |
 | `store_manager` | Stock / PO's / Issue / Audit tabs | Issuing materials: `materialRequested -> readyToCollect` |
-| `accountant` | Ledgers, six tabs | Money: invoices once every sheet is `ready`, confirmed bills, payroll |
-| the other six | "Role isn't available yet" placeholder | — |
+| `accountant` | Ledgers, six tabs | Money: invoices once an order is delivered, confirmed bills, payroll |
+| `company_admin` | Dashboard | Master data, approvals, reports |
+| `super_admin` | Platform console | Above the tenant boundary — gated on `is_platform_admin`, not on this map |
+| `worker`, `finishing_partner` | "Role isn't available yet" placeholder | — |
+
+### The unified staff persona
+
+Order Taking and Procurement are **not modules of their own any more**. They are
+two of five *grants* on `employees.responsibilities`, and the Staff Dashboard is
+the root screen that opens them:
+
+| Grant | Opens | Reuses |
+| --- | --- | --- |
+| `orderTaking` | Orders List | `features/order-taker` unchanged |
+| `sheetMovement` | Move Hub → Drop-off / Pick Up | new |
+| `orderDelivery` | Delivery Queue → Deliver → Done | new |
+| `orderReturn` | Return Queue → Raise Return | new |
+| `procurePo` | Procurement Queue | `features/procurement` unchanged |
+
+One login holds any subset. The dashboard renders one card per grant held and
+nothing else — no greyed-out card for a capability an account lacks. Both reused
+modules take a `cameFromDashboard` route param that swaps their home header for
+a back bar; they are nested navigators inside `StaffStack`, not re-registered
+screens.
+
+The legacy `order_taker` and `procurement` roles still sign in and still reach
+the same screens: they land on the Dashboard holding the one grant their role
+implies (`features/staff/grants.ts`), matching the `role = '…' OR has_grant(…)`
+dual-check every policy in `0013_staff_persona.sql` uses. Nothing was removed
+from those accounts — the way in moved.
 
 There is no module picker. An employee has their own account and their own
 device, so "their own dashboard" is literal, not a disclaimer above a list of
@@ -636,8 +691,11 @@ Sign-out lives on each module's own home screen (the log-out icon in the home
 Every new screen should say which stage it reads or writes, which roles reach
 it, and what must already be true upstream.
 
-Coarse stage (`orders.stage`, drives the shared `Timeline`):
-`inspection -> coding -> jobcard -> production -> finishing -> delivery`
+Coarse stage (`orders.stage`, drives the shared `Timeline`). Seven values since
+`0013_staff_persona.sql`: `coding` ("QA Coding") is gone, and the three floor
+phases it used to hide are each named now.
+`inspection -> jobcard -> materialCollection -> machineAssignment -> production
+-> finishing -> delivery`
 
 Floor Manager sub-status (`orders.floor_status`, alongside `stage`, not a
 replacement — see the reconciliation note above):
@@ -648,8 +706,11 @@ Per-sheet production (`order_sheets.stage`):
 `producing -> readyForStage -> stageFormDone -> (loop per finishing stage) ->
 readyForFinal -> ready`
 
-`finishing` and `delivery` have no screens; they belong to the Delivery Person
-role, which is not specced yet.
+`finishing` and `delivery` belong to the staff persona: `sheetMovement` tracks
+sheets out to a finishing partner and back, and `orderDelivery` is what sets
+`orders.delivered_at` — which is the single event that makes an order payable.
+An order can be fully stitched, finished and loaded in the van and still owe
+nothing until it is delivered.
 
 ### Conventions
 

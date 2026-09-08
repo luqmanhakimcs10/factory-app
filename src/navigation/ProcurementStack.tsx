@@ -16,10 +16,11 @@ import { SubmittedScreen } from '../features/procurement/submitted/SubmittedScre
  * the store manager confirms it to `confirmed`, which is what the Accountant's
  * Payables tab has always filtered on.
  *
- * `Queue` takes `cameFromDashboard` because this stack is not the only way in.
- * A unified staff account holding the `procurePo` grant reaches the same screen
- * from the Staff Dashboard, where the header has to be a back bar rather than a
- * module root.
+ * `Queue` takes `cameFromDashboard` because this stack is no longer a module
+ * root: Procurement is a grant now, and this navigator is nested inside
+ * `StaffStack`. Reached from the Staff Dashboard, the header is a back bar
+ * rather than a home bar. The home-bar branch stays for any route that mounts
+ * this stack as a root of its own.
  */
 export type ProcurementStackParamList = {
   Queue: { cameFromDashboard?: boolean } | undefined;

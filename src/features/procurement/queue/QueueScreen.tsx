@@ -19,12 +19,14 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
  * The module's landing screen: what still needs a bill, and what was billed
  * this week.
  *
- * **Two entry paths, one screen.** A dedicated `procurement` login lands here
- * as its module root and gets the home header. A unified staff account holding
- * the `procurePo` grant arrives from the Staff Dashboard, and gets a back bar
- * instead — from there, "home" is the dashboard, not this. The variant is a
- * route param rather than a second copy of the screen, because everything below
- * the header is identical and a fork here would be two lists to keep in step.
+ * **Two entry paths, one screen.** Procurement is a grant now, so this is
+ * reached from the Staff Dashboard and gets a back bar — from there, "home" is
+ * the dashboard, not this. A legacy dedicated `procurement` login arrives the
+ * same way, holding the one grant its role implies, so in practice the back bar
+ * is what shows; the home-header branch stays for any route that mounts this
+ * stack as a root. The variant is a route param rather than a second copy of
+ * the screen, because everything below the header is identical and a fork here
+ * would be two lists to keep in step.
  *
  * "Submitted This Week" is deliberately factory-wide rather than
  * `submitted_by = self`: procurement is a shift, not a private inbox, and

@@ -18,6 +18,16 @@ export interface DashCardProps {
   title: string;
   subLabel?: string;
   /**
+   * Bottom-aligned status line, e.g. "1 to drop · 2 out".
+   *
+   * Distinct from `subLabel`, which is prose describing what the card is. This
+   * is a live figure about what is waiting inside it, so it renders mono like
+   * every other exact number in the app.
+   */
+  stat?: string;
+  /** Render the stat in red — something behind it needs attention now. */
+  statUrgent?: boolean;
+  /**
    * Icon-square palette. Purely visual rhythm across a grid — it carries no
    * status meaning, so a card is not "warning" for being amber.
    */
@@ -46,6 +56,8 @@ export function DashCard({
   count,
   title,
   subLabel,
+  stat,
+  statUrgent = false,
   tone = 'default',
   onPress,
   style,
@@ -55,7 +67,7 @@ export function DashCard({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={count === undefined ? title : `${title}, ${count}`}
+      accessibilityLabel={[title, count, stat].filter((part) => part !== undefined).join(', ')}
       disabled={!onPress}
       onPress={onPress}
       style={({ pressed }) => [styles.card, pressed && styles.pressed, style]}
@@ -70,6 +82,11 @@ export function DashCard({
       {subLabel ? (
         <Text style={styles.subLabel} numberOfLines={3}>
           {subLabel}
+        </Text>
+      ) : null}
+      {stat ? (
+        <Text style={[styles.stat, statUrgent && styles.statUrgent]} numberOfLines={1}>
+          {stat}
         </Text>
       ) : null}
     </Pressable>
@@ -118,5 +135,15 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
     color: colors.textSecondary,
+  },
+  stat: {
+    marginTop: 'auto',
+    fontFamily: fonts.mono.medium,
+    fontSize: 12,
+    lineHeight: 16,
+    color: colors.textSecondary,
+  },
+  statUrgent: {
+    color: colors.danger,
   },
 });

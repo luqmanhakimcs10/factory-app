@@ -31,7 +31,11 @@ export function SubmittedScreen({ navigation, route }: Props) {
 
   const backToQueue = useCallback(() => {
     clearDraft();
-    navigation.navigate('Queue', { cameFromDashboard: false });
+    // `popToTop`, not `navigate`: Queue is already at the bottom of this stack
+    // with the params it was opened on. Re-entering it with
+    // `cameFromDashboard: false` put a module-root home header on a screen the
+    // person reached from the Staff Dashboard, stranding them there.
+    navigation.popToTop();
   }, [clearDraft, navigation]);
 
   useFocusEffect(
