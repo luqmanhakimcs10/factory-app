@@ -7,7 +7,7 @@
 -- this. Dashboard-created users are guaranteed to satisfy whatever GoTrue
 -- version this project runs, which a hand-written INSERT is not.
 --
--- Re-add ALL EIGHT emails listed below, not only the role you are chasing.
+-- Re-add ALL NINE emails listed below, not only the role you are chasing.
 -- `profiles.id` references `auth.users`, so deleting a user takes its profile
 -- with it: recreating only three of them is what leaves `store.a@` and
 -- `accounts.a@` failing sign-in, and leaves the accountant's payroll screens
@@ -31,7 +31,12 @@ from (
     ('accounts.a@example.com', 'accountant',    'Accountant A'),
     -- Never signs in, but salary and loans key on a profile row.
     ('worker.a@example.com',   'worker',        'Imran Ali'),
-    ('admin.a@example.com',    'company_admin', 'Company Admin A')
+    ('admin.a@example.com',    'company_admin', 'Company Admin A'),
+    -- The unified staff persona. This row only decides that the account lands
+    -- on the Staff Dashboard; what it can actually reach comes from the grants
+    -- on its `employees` row — run `setup_delivery_person.sql` after this, or
+    -- the dashboard renders empty.
+    ('delivery.a@example.com', 'delivery_person', 'Imran Ali')
     -- super.a@example.com is deliberately NOT in this list: a platform admin
     -- belongs to the Platform Operations tenant and needs is_platform_admin
     -- set, neither of which this factory-scoped repair script does. See the
@@ -43,7 +48,7 @@ set factory_id = excluded.factory_id,
     role = excluded.role,
     full_name = excluded.full_name;
 
--- Should list eight rows, each with a factory and a role. Any row with a NULL
+-- Should list nine rows, each with a factory and a role. Any row with a NULL
 -- role is an auth user with no profile: that account signs in but lands on the
 -- "role isn't available yet" placeholder instead of its module.
 select u.email, p.role, f.name as factory
