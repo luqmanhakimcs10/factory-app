@@ -18,6 +18,29 @@
 -- application, so running it twice does not duplicate a movement or a return.
 
 -- ---------------------------------------------------------------------------
+-- 0. Refuse to run out of order
+--
+-- Everything below keys on the profile, and an INSERT ... SELECT that finds no
+-- rows is not an error — it is a no-op. Run before step 2 and the grants
+-- silently do not happen while the demo data succeeds around them, which looks
+-- like the script worked: the dashboard then renders empty and nothing says
+-- why. This is that failure, turned into a message.
+-- ---------------------------------------------------------------------------
+
+do $$
+begin
+  if not exists (
+    select 1 from profiles p
+    join auth.users u on u.id = p.id
+    where u.email = 'delivery.a@example.com'
+  ) then
+    raise exception using
+      message = 'No profile for delivery.a@example.com',
+      hint = 'Create the auth user (Authentication -> Users -> Add user, Auto Confirm ticked), then run link_profiles_by_email.sql, then re-run this file.';
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------------
 -- 1. The grants. This is the part that actually matters.
 --
 -- `profiles.role` gets the account as far as the Staff Dashboard and no
@@ -165,6 +188,19 @@ update orders
 set alert_text = '2 repeats returned by QA — take them back to the client.'
 where id in (select order_id from return_requests where status = 'pending')
   and alert_text is null;
+
+-- Repair for anyone who hit the out-of-order case before step 0 existed: the
+-- movements were written with a null `created_by`, because the profile the
+-- subquery looked for was not there yet. Nothing reads the column today, so
+-- this is tidiness rather than a fix — but a null author on a row that claims
+-- to be demo data for a specific person is a lie the next reader has to unpick.
+update movements
+set created_by = (
+  select p.id from profiles p
+  join auth.users u on u.id = p.id
+  where u.email = 'delivery.a@example.com'
+)
+where created_by is null;
 
 -- ---------------------------------------------------------------------------
 -- Verify
