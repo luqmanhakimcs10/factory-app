@@ -1,8 +1,3 @@
-import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
-// The beta helper, not the plain one: `fallbacks` exists only on the beta
-// message params, so the whole call sits in that namespace and the output
-// format has to be the matching beta type.
-import { betaZodOutputFormat } from 'npm:@anthropic-ai/sdk@0.124.0/helpers/beta/zod';
 import { createClient } from 'npm:@supabase/supabase-js@2.116.0';
 import { z } from 'npm:zod@4.5.4';
 
@@ -24,7 +19,9 @@ import { z } from 'npm:zod@4.5.4';
  * **Why an edge function and not the app.** The API key. A key shipped in a
  * React Native bundle is a public key — the bundle is on the device, and an
  * embroidery factory's phones are not a trusted environment. It never leaves
- * this process.
+ * this process. This is also why the key is a Supabase secret rather than a
+ * `.env` entry: `app.config.ts` forwards `.env` into `expo.extra`, which is
+ * compiled into the shipped JavaScript.
  *
  * **Whose authority this runs with.** The caller's, never the service role. The
  * Supabase client below is built from the caller's own `Authorization` header,
@@ -32,9 +29,26 @@ import { z } from 'npm:zod@4.5.4';
  * obeys: a person who could not open this order cannot have it read for them
  * either. That is also why there is no role check in this file — the policies
  * are the check, and a second one here would be a second thing to keep in step.
+ *
+ * **Provider.** Google Gemini, reached over plain REST — there is no Deno-native
+ * SDK worth the dependency for one endpoint. Every Gemini-specific detail lives
+ * in `readDesignSheet` below; nothing above or below it knows which model read
+ * the sheet, so swapping providers again is one function.
  */
 
-const MODEL = 'claude-opus-5';
+/**
+ * Flash tier, and overridable without a redeploy.
+ *
+ * `gemini-3.8-flash` is the most capable Flash model, which is the one that
+ * matters here: the hard inputs are handwritten slips and glare on an LCD, and
+ * that is exactly where a lighter model gives up. Set `GEMINI_MODEL` to
+ * `gemini-3.1-flash-lite` if free-tier quota turns out to bite — it is the
+ * higher-throughput option and the swap needs no code change.
+ */
+const MODEL = Deno.env.get('GEMINI_MODEL') ?? 'gemini-3.8-flash';
+
+const ENDPOINT = (model: string) =>
+  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
 /**
  * The palette the app can actually render, from `src/data/swatches.ts`.
@@ -63,57 +77,132 @@ const PALETTE = [
   'custom',
 ] as const;
 
-const colorSchema = z.object({
-  sequence: z
-    .number()
-    .int()
-    .describe('1-based position in the stitch order, as printed on the sheet.'),
-  name: z
-    .string()
-    .describe("The colour exactly as written on the sheet, in the sheet's own words."),
-  palette_match: z
-    .enum(PALETTE)
-    .describe('Closest colour in the factory palette, or "custom" if none is close.'),
-  thread_code: z
-    .string()
-    .nullable()
-    .describe('Thread brand/number if shown, e.g. "Madeira 1147". Null if absent.'),
-  stitches: z
-    .number()
-    .int()
-    .nullable()
-    .describe('Stitch count for this colour. Null if the sheet does not give one.'),
+/**
+ * What the model is asked to return.
+ *
+ * Hand-written rather than generated from the Zod schema below, because Gemini
+ * accepts a subset of JSON Schema: optionality is `nullable: true` on a typed
+ * field, not a union with null, and `additionalProperties` is not understood.
+ * The two are kept in step by `extractionSchema` parsing every response — a
+ * drift between them fails here, in this function, rather than as a missing
+ * field three screens into the app.
+ */
+const RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    design_code: {
+      type: 'string',
+      nullable: true,
+      description: "The client's own design code or number, if the sheet carries one.",
+    },
+    design_name: {
+      type: 'string',
+      nullable: true,
+      description: 'Design name or title, if named.',
+    },
+    total_stitches: {
+      type: 'integer',
+      nullable: true,
+      description: 'Total stitch count as printed. Null if the sheet states no total.',
+    },
+    width_mm: {
+      type: 'number',
+      nullable: true,
+      description: 'Design width in millimetres. Convert from cm or inches if needed.',
+    },
+    height_mm: {
+      type: 'number',
+      nullable: true,
+      description: 'Design height in millimetres.',
+    },
+    colors: {
+      type: 'array',
+      description: 'The colour sequence, in stitch order.',
+      items: {
+        type: 'object',
+        properties: {
+          sequence: {
+            type: 'integer',
+            description: '1-based position in the stitch order, as printed on the sheet.',
+          },
+          name: {
+            type: 'string',
+            description: "The colour exactly as written on the sheet, in the sheet's own words.",
+          },
+          palette_match: {
+            type: 'string',
+            enum: [...PALETTE],
+            description: 'Closest colour in the factory palette, or "custom" if none is close.',
+          },
+          thread_code: {
+            type: 'string',
+            nullable: true,
+            description: 'Thread brand/number if shown, e.g. "Madeira 1147". Null if absent.',
+          },
+          stitches: {
+            type: 'integer',
+            nullable: true,
+            description: 'Stitch count for this colour. Null if the sheet gives none.',
+          },
+        },
+        required: ['sequence', 'name', 'palette_match', 'thread_code', 'stitches'],
+      },
+    },
+    raw_text: {
+      type: 'string',
+      description: 'Every piece of text visible on the sheet, in reading order.',
+    },
+    confidence: {
+      type: 'string',
+      enum: ['high', 'medium', 'low'],
+      description:
+        'high: clean print, every field legible. medium: readable with some inference. low: handwriting, glare or damage left real doubt.',
+    },
+    notes: {
+      type: 'string',
+      nullable: true,
+      description: 'Anything the floor manager should check by hand. Null if nothing.',
+    },
+  },
+  required: [
+    'design_code',
+    'design_name',
+    'total_stitches',
+    'width_mm',
+    'height_mm',
+    'colors',
+    'raw_text',
+    'confidence',
+    'notes',
+  ],
+};
+
+/**
+ * The same shape again, as the thing that actually decides whether a response is
+ * usable.
+ *
+ * A schema sent to a model is a request; this is enforcement. Gemini returning
+ * something off-shape has to fail loudly here rather than be written to
+ * `orders.design_sheet_extraction` and surface later as a blank needle row.
+ */
+const extractedColorSchema = z.object({
+  sequence: z.number().int(),
+  name: z.string(),
+  palette_match: z.enum(PALETTE),
+  thread_code: z.string().nullable(),
+  stitches: z.number().int().nullable(),
 });
 
 const extractionSchema = z.object({
-  design_code: z
-    .string()
-    .nullable()
-    .describe("The client's own design code or number, if the sheet carries one."),
-  design_name: z.string().nullable().describe('Design name or title, if named.'),
-  total_stitches: z
-    .number()
-    .int()
-    .nullable()
-    .describe('Total stitch count as printed. Null if the sheet does not state a total.'),
-  width_mm: z
-    .number()
-    .nullable()
-    .describe('Design width in millimetres. Convert from cm or inches if needed.'),
-  height_mm: z.number().nullable().describe('Design height in millimetres.'),
-  colors: z.array(colorSchema).describe('The colour sequence, in stitch order.'),
-  raw_text: z
-    .string()
-    .describe('Every piece of text visible on the sheet, in reading order.'),
-  confidence: z
-    .enum(['high', 'medium', 'low'])
-    .describe(
-      'high: clean print, every field legible. medium: readable with some inference. low: handwriting, glare or damage left real doubt.',
-    ),
-  notes: z
-    .string()
-    .nullable()
-    .describe('Anything the floor manager should check by hand. Null if nothing.'),
+  design_code: z.string().nullable(),
+  design_name: z.string().nullable(),
+  total_stitches: z.number().int().nullable(),
+  width_mm: z.number().nullable(),
+  height_mm: z.number().nullable(),
+  colors: z.array(extractedColorSchema),
+  raw_text: z.string(),
+  confidence: z.enum(['high', 'medium', 'low']),
+  notes: z.string().nullable(),
 });
 
 const SYSTEM = `You read embroidery design sheets for a Pakistani embroidery factory and return their contents as structured data.
@@ -149,6 +238,109 @@ all mean medium or low. Use notes to say exactly which field you are unsure
 about, so the floor manager knows where to look rather than re-checking all of
 it.`;
 
+const INSTRUCTION =
+  'Read this design sheet. Return every field you can see and null for every field you cannot.';
+
+type Extraction = z.infer<typeof extractionSchema>;
+
+/**
+ * The only function that knows which model read the sheet.
+ *
+ * Everything Gemini-specific is here: the endpoint, the `contents`/`parts`
+ * request shape, `generationConfig.responseSchema`, and digging the text back
+ * out of `candidates[0].content.parts[]`. Swapping providers means rewriting
+ * this function and nothing else.
+ */
+async function readDesignSheet(
+  apiKey: string,
+  imageBase64: string,
+  mimeType: string,
+): Promise<Extraction> {
+  const response = await fetch(ENDPOINT(MODEL), {
+    method: 'POST',
+    headers: {
+      // The key as a header, not `?key=` on the URL. Same authentication, but a
+      // query string ends up in proxy and access logs; a header does not.
+      'x-goog-api-key': apiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [
+            // The system rules ride in the first text part rather than in a
+            // `systemInstruction` block. One turn, no cache to preserve, and
+            // this shape is the one the REST reference documents — an extraction
+            // that fails because of where the rules were placed is a failure
+            // with no upside.
+            { text: `${SYSTEM}\n\n${INSTRUCTION}` },
+            { inline_data: { mime_type: mimeType, data: imageBase64 } },
+          ],
+        },
+      ],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseSchema: RESPONSE_SCHEMA,
+        // Reading a number off a page has one right answer. Sampling variety
+        // here would mean the same photo could produce two different stitch
+        // counts on two taps of "Read again".
+        temperature: 0,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Gemini returned ${response.status}: ${detail.slice(0, 400)}`);
+  }
+
+  const payload = await response.json();
+
+  const blocked = payload?.promptFeedback?.blockReason;
+  if (blocked) throw new Error(`The image was blocked by the model (${blocked}).`);
+
+  const parts = payload?.candidates?.[0]?.content?.parts;
+  const text = Array.isArray(parts)
+    ? parts.map((part: { text?: string }) => part.text ?? '').join('')
+    : undefined;
+
+  if (!text) {
+    const finish = payload?.candidates?.[0]?.finishReason;
+    throw new Error(
+      finish
+        ? `The model returned no text (${finish}).`
+        : 'The model returned no text.',
+    );
+  }
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(stripFences(text));
+  } catch {
+    throw new Error(`The model did not return JSON: ${text.slice(0, 200)}`);
+  }
+
+  const parsed = extractionSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(`The sheet was read but came back off-shape: ${parsed.error.message}`);
+  }
+
+  return parsed.data;
+}
+
+/**
+ * Belt and braces for a fenced response.
+ *
+ * `responseMimeType: 'application/json'` should make this dead code — but the
+ * cost of being wrong is a parse error on a sheet the floor manager is holding,
+ * and the cost of the guard is four lines.
+ */
+function stripFences(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('```')) return trimmed;
+  return trimmed.replace(/^```(?:json)?\s*/i, '').replace(/```$/, '').trim();
+}
+
 interface RequestBody {
   orderId?: string;
   photoPath?: string;
@@ -183,12 +375,12 @@ Deno.serve(async (req: Request) => {
   // faults with different owners. A malformed call is the app's bug and must say
   // so whatever the deploy looks like, while a missing key is the operator's and
   // would otherwise mask every 400 behind it.
-  const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
+  const apiKey = Deno.env.get('GEMINI_API_KEY');
   if (!apiKey) {
     // Loud, and distinguishable from a model failure: this is the one error a
     // deploy can cause, and it looks like "extraction is broken" from the app.
     return json(
-      { error: 'ANTHROPIC_API_KEY is not set on this project. Run: supabase secrets set ANTHROPIC_API_KEY=...' },
+      { error: 'GEMINI_API_KEY is not set on this project. Run: supabase secrets set GEMINI_API_KEY=...' },
       500,
     );
   }
@@ -210,48 +402,15 @@ Deno.serve(async (req: Request) => {
     return json({ error: 'Could not read that photo.' }, 404);
   }
 
-  const mediaType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+  const mimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
   const base64 = encodeBase64(await file.arrayBuffer());
 
-  const anthropic = new Anthropic({ apiKey });
-
-  let parsed: z.infer<typeof extractionSchema> | null = null;
+  let parsed: Extraction;
   try {
-    const response = await anthropic.beta.messages.parse({
-      model: MODEL,
-      max_tokens: 16000,
-      system: SYSTEM,
-      // A refusal here would surface to the floor manager as a blank sheet with
-      // no explanation, so the request carries a fallback rather than failing.
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
-            {
-              type: 'text',
-              text: 'Read this design sheet. Return every field you can see and null for every field you cannot.',
-            },
-          ],
-        },
-      ],
-      output_config: { format: betaZodOutputFormat(extractionSchema) },
-    });
-
-    if (response.stop_reason === 'refusal') {
-      return json({ error: 'The model declined to read this image.' }, 422);
-    }
-
-    parsed = response.parsed_output;
+    parsed = await readDesignSheet(apiKey, base64, mimeType);
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : String(caught);
     return json({ error: `Could not read the sheet: ${message}` }, 502);
-  }
-
-  if (!parsed) {
-    return json({ error: 'The sheet was read but did not come back in the expected shape.' }, 502);
   }
 
   const extraction = {

@@ -12,18 +12,44 @@ Reads a photographed design sheet into structured fields — the colour sequence
 stitch counts, design code, dimensions — so the floor manager confirms numbers
 instead of typing them. Called from the Job Card's first step.
 
-It exists as a function rather than app code for one reason: the Anthropic API
-key. A key in a React Native bundle is a public key.
+It exists as a function rather than app code for one reason: the API key. A key
+in a React Native bundle is a public key.
 
 ### Secret
 
 ```bash
-supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
+supabase secrets set GEMINI_API_KEY=...
 ```
 
-Without it the function returns a 500 naming this command, rather than failing
-as if the model were unavailable — the one deploy mistake that otherwise looks
-identical to "extraction is broken".
+Get the key from <https://aistudio.google.com/apikey>. Free tier, no billing
+setup, Flash-tier models only.
+
+**Not `.env`.** `app.config.ts` forwards `.env` into `expo.extra`, which is
+compiled into the JavaScript that ships to every phone. `SUPABASE_ANON_KEY`
+lives there safely because it is public by design and constrained by RLS; a
+Gemini key is neither, and would be extractable from any installed build and
+billable to you.
+
+Without the secret the function returns a 500 naming this command, rather than
+failing as if the model were unavailable — the one deploy mistake that otherwise
+looks identical to "extraction is broken".
+
+### Model
+
+`gemini-3.8-flash` by default: the most capable Flash model, which is what
+matters when the hard inputs are handwritten slips and glare on an LCD screen.
+Override without touching code:
+
+```bash
+supabase secrets set GEMINI_MODEL=gemini-3.1-flash-lite
+```
+
+`gemini-3.1-flash-lite` is the higher-throughput option if free-tier quota
+bites. Free-tier rate limits are no longer published as a static table — check
+your own at <https://aistudio.google.com/rate-limit>.
+
+Do not use anything in the 2.0 or 2.5 series: 2.0 is shut down and 2.5 retires
+16 October 2026.
 
 ### Deploy
 
@@ -39,11 +65,21 @@ nothing more. That is also why there is no role check inside the function: the
 policies are the check, and a second copy would be a second thing to keep in
 step.
 
-### Cost
+### Swapping providers
 
-One Claude Opus 5 call per read, on one image plus a short prompt — cents at
-most, and reading is a separate tap from photographing so a blurry first shot
-does not spend one. Model and pricing: `claude-opus-5`, $5/MTok in, $25/MTok out.
+Everything provider-specific lives in `readDesignSheet` — the endpoint, the
+`contents`/`parts` request shape, `generationConfig.responseSchema`, and pulling
+the text back out of `candidates[0].content.parts[]`. Nothing above or below it
+knows which model read the sheet. On the app side, `extractDesignSheet` in
+`src/features/floor-manager/designSheet.ts` only ever sees this function's own
+`{ extraction, saved }` response, so it never needed changing when the provider
+did.
+
+Two schemas describe the same shape on purpose. `RESPONSE_SCHEMA` is JSON Schema
+sent to Gemini — a request. `extractionSchema` is Zod, and is what decides
+whether a response is usable before anything is written to the order. A model
+returning something off-shape has to fail in the function, not surface later as
+a blank needle row.
 
 ### The palette is duplicated
 
