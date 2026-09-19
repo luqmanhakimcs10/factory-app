@@ -346,14 +346,52 @@ interface RequestBody {
   photoPath?: string;
 }
 
+/**
+ * CORS, because the app also runs in a browser.
+ *
+ * Expo Go and a native build call this function from a runtime with no origin
+ * and no preflight, so it worked from a phone while being unreachable from the
+ * Vercel deployment. The browser sends `OPTIONS` first, and a preflight that
+ * comes back without these headers is failed by the browser before the real
+ * POST is ever attempted — which surfaces through supabase-js as "Failed to
+ * send a request to the Edge Function", with no status and nothing in the
+ * function logs, because the request genuinely never arrived.
+ *
+ * `*` rather than the Vercel domain: authorisation here is the bearer token in
+ * the `Authorization` header, never a cookie, so there is no ambient authority
+ * for a hostile origin to borrow. Pinning the origin would also mean editing
+ * this file for every preview deployment, and a stale allowlist fails exactly
+ * the same silent way this bug did.
+ */
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  // A day, so the browser stops re-asking before every extraction.
+  'Access-Control-Max-Age': '86400',
+};
+
+/**
+ * Every response leaves through here, which is the point.
+ *
+ * The headers belong on the error paths as much as the success one. A function
+ * that only sets them when things go well still breaks in the browser the
+ * moment anything fails — and it fails as an opaque network error rather than
+ * as the 400 or 500 the function actually returned, so the real message never
+ * reaches the person who could act on it.
+ */
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...CORS, 'Content-Type': 'application/json' },
   });
 }
 
 Deno.serve(async (req: Request) => {
+  // Answered before the method guard below, which would otherwise reject the
+  // preflight as "Use POST" — a 405 the browser reads as a failed preflight.
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+
   if (req.method !== 'POST') return json({ error: 'Use POST.' }, 405);
 
   const authorization = req.headers.get('Authorization');
