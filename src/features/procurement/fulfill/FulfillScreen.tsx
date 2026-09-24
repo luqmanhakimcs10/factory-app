@@ -30,6 +30,7 @@ import { listSuppliers } from '../../company-admin/rosters';
 import type { ProcurementStackParamList } from '../../../navigation/ProcurementStack';
 import {
   getProcurementPo,
+  hasYards,
   lineLabel,
   lineQuantity,
   poLines,
@@ -53,6 +54,7 @@ const SEQUIN_CUTS = ['Cut', 'Flat', 'Cup'];
 /** Which control the numeric keypad is currently standing in for. */
 type KeypadTarget =
   | { kind: 'itemPrice'; itemId: string; label: string }
+  | { kind: 'itemYards'; itemId: string; label: string }
   | { kind: 'addQty' }
   | { kind: 'addPrice' };
 
@@ -195,6 +197,8 @@ export function FulfillScreen({ navigation, route }: Props) {
         itemPrices: requested.map((line) => ({
           id: line.id,
           price: draft.prices[line.id] as number,
+          // Untouched means "came in as asked".
+          gotYards: hasYards(line.type) ? (draft.yards[line.id] ?? line.askYards) : null,
         })),
         additionalItems: draft.additional.map(({ key: _key, ...item }) => item),
       });
@@ -249,9 +253,13 @@ export function FulfillScreen({ navigation, route }: Props) {
                   key={line.id}
                   line={line}
                   price={priceOf(line)}
+                  gotYards={readOnly ? line.gotYards : (draft.yards[line.id] ?? line.askYards)}
                   disabled={readOnly}
                   onPress={() =>
                     setKeypad({ kind: 'itemPrice', itemId: line.id, label: line.label })
+                  }
+                  onPressYards={() =>
+                    setKeypad({ kind: 'itemYards', itemId: line.id, label: line.label })
                   }
                 />
               ))
@@ -455,21 +463,28 @@ export function FulfillScreen({ navigation, route }: Props) {
       <NumericKeypadSheet
         visible={keypad !== null}
         title={keypadTitle(keypad)}
-        initialValue={keypadInitial(keypad, draft.prices, addQty, addPrice)}
+        initialValue={keypadInitial(keypad, draft.prices, draft.yards, addQty, addPrice)}
         placeholder="Tap to set"
         maxLength={7}
         minLength={1}
         format={(digits) =>
-          keypad?.kind === 'addQty' ? Number(digits).toLocaleString() : formatRs(Number(digits))
+          keypad?.kind === 'addQty' || keypad?.kind === 'itemYards'
+            ? Number(digits).toLocaleString()
+            : formatRs(Number(digits))
         }
         // Driven by the target, not by a second keypad component: the unit is a
         // property of the field that opened it.
         unitSuffix={
-          keypad?.kind === 'addQty' ? ` ${QUANTITY_UNITS[addType ?? 'thread']}` : undefined
+          keypad?.kind === 'addQty'
+            ? ` ${QUANTITY_UNITS[addType ?? 'thread']}`
+            : keypad?.kind === 'itemYards'
+              ? ' yd'
+              : undefined
         }
         onSubmit={(digits) => {
           const value = Number(digits);
           if (keypad?.kind === 'itemPrice') draft.setPrice(keypad.itemId, value);
+          if (keypad?.kind === 'itemYards') draft.setYards(keypad.itemId, value);
           if (keypad?.kind === 'addQty') setAddQty(value);
           if (keypad?.kind === 'addPrice') setAddPrice(value);
           setKeypad(null);
@@ -483,31 +498,43 @@ export function FulfillScreen({ navigation, route }: Props) {
 function keypadTitle(target: KeypadTarget | null): string {
   if (target === null) return '';
   if (target.kind === 'itemPrice') return `Bill price — ${target.label}`;
+  if (target.kind === 'itemYards') return `Yards per unit bought — ${target.label}`;
   return target.kind === 'addQty' ? 'Quantity bought' : 'Price paid';
 }
 
 function keypadInitial(
   target: KeypadTarget | null,
   prices: Record<string, number>,
+  yards: Record<string, number>,
   addQty: number | null,
   addPrice: number | null,
 ): string {
   if (target === null) return '';
   if (target.kind === 'itemPrice') return prices[target.itemId]?.toString() ?? '';
+  if (target.kind === 'itemYards') return yards[target.itemId]?.toString() ?? '';
   if (target.kind === 'addQty') return addQty?.toString() ?? '';
   return addPrice?.toString() ?? '';
 }
 
+/**
+ * One requested line. Thread and sequin also carry the yards per unit actually
+ * bought, pre-filled with what was asked: a supplier's cone can be shorter than
+ * the one requested while the count matches, and Store Manager flags that.
+ */
 function LineRow({
   line,
   price,
+  gotYards,
   disabled,
   onPress,
+  onPressYards,
 }: {
   line: PoLine;
   price: number | null;
+  gotYards: number | null;
   disabled: boolean;
   onPress: () => void;
+  onPressYards: () => void;
 }) {
   return (
     <View style={styles.lineRow}>
@@ -533,7 +560,20 @@ function LineRow({
             {`Recommend: ${line.recommendedSupplier}`}
           </Text>
         ) : null}
+        {hasYards(line.type) && line.askYards !== null ? (
+          <Text style={type.caption}>{`Asked ${line.askYards.toLocaleString()} yd per unit`}</Text>
+        ) : null}
       </View>
+
+      {hasYards(line.type) ? (
+        <PriceTap
+          value={gotYards === null ? null : `${gotYards.toLocaleString()} yd`}
+          placeholder="yd"
+          disabled={disabled}
+          label={`Yards per unit bought for ${line.label}`}
+          onPress={onPressYards}
+        />
+      ) : null}
 
       <PriceTap
         value={price === null ? null : formatRs(price)}

@@ -11,13 +11,18 @@ import { piecesFor } from './sequinMath';
  * many sequin pieces that is.
  *
  * The unit each type is *counted* in is part of the contract, not a display
- * choice: thread and tilla are grams, sequin is CDs, bobbin is pieces. That is
- * what `QUANTITY_UNITS` names, and it is also what the numeric keypad shows as
- * its suffix while the number is being typed.
+ * choice: thread is cones, tilla is grams, sequin is CDs, bobbin is pieces.
+ * That is what `QUANTITY_UNITS` names, and it is also what the numeric keypad
+ * shows as its suffix while the number is being typed.
+ *
+ * Thread moved from grams to cones with the lot-based stock model (0018): a
+ * lot is bought and drained by the cone, and each lot carries its own yards per
+ * cone. Floor Manager's material requests are still computed in grams and have
+ * no cone conversion; they are shown as grams where they appear.
  */
 
 export const QUANTITY_UNITS: Record<StockType, string> = {
-  thread: 'g',
+  thread: 'cones',
   tilla: 'g',
   sequin: 'CDs',
   bobbin: 'pcs',
@@ -50,6 +55,7 @@ export function formatQuantity(
 ): string {
   switch (stockType) {
     case 'thread':
+      return `${qty.toLocaleString()} ${qty === 1 ? 'cone' : 'cones'}`;
     case 'tilla':
       return formatGrams(qty);
     case 'sequin':

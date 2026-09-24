@@ -26,6 +26,8 @@ const poItemSchema = z.object({
   id: uuid(),
   qty: z.number(),
   price: z.number().nullable(),
+  ask_yards: z.number().nullable(),
+  got_yards: z.number().nullable(),
   is_additional: z.boolean(),
   item_type: stockTypeSchema.nullable(),
   color_id: z.string().nullable(),
@@ -61,7 +63,7 @@ export type ProcurementPo = z.infer<typeof procurementPoSchema>;
 const PO_SELECT =
   'id, po_number, status, source, date, submitted_at, bill_photo_url, ' +
   'actual_supplier:actual_supplier_id(id, name), ' +
-  'po_items(id, qty, price, is_additional, item_type, color_id, sequin_size_mm, sequin_cut_type, ' +
+  'po_items(id, qty, price, ask_yards, got_yards, is_additional, item_type, color_id, sequin_size_mm, sequin_cut_type, ' +
   'recommended_supplier:recommended_supplier_id(name), ' +
   'stock_items(type, label, color_id, custom_hex, size_mm, cut_type))';
 
@@ -101,6 +103,10 @@ export interface PoLine {
   colorId: string | null;
   hex: string | null;
   sizeMm: number | null;
+  /** Yards per unit the store manager asked for (thread / sequin). */
+  askYards: number | null;
+  /** Yards per unit actually bought, once procurement has recorded it. */
+  gotYards: number | null;
   /** Only ever set on a requested line, and only when one was suggested. */
   recommendedSupplier: string | null;
 }
@@ -167,6 +173,8 @@ export function toLine(item: ProcurementPo['po_items'][number]): PoLine {
     label: lineLabel(type, colorId, sizeMm, cutType),
     ...lineSwatch(type, colorId, stock?.custom_hex ?? null),
     sizeMm,
+    askYards: item.ask_yards,
+    gotYards: item.got_yards,
     recommendedSupplier: item.recommended_supplier?.name ?? null,
   };
 }
@@ -202,6 +210,9 @@ export interface AdditionalItemInput {
   price: number;
 }
 
+/** Thread cones and sequin CDs carry a length per unit; tilla and bobbin do not. */
+export const hasYards = (type: StockType) => type === 'thread' || type === 'sequin';
+
 /**
  * Price the requested lines, add whatever else was bought, submit the bill.
  *
@@ -215,7 +226,7 @@ export async function submitProcurementBill(args: {
   purchaseOrderId: string;
   actualSupplierId: string;
   billPhotoUri: string;
-  itemPrices: { id: string; price: number }[];
+  itemPrices: { id: string; price: number; gotYards: number | null }[];
   additionalItems: AdditionalItemInput[];
 }): Promise<void> {
   const billPhotoUrl = await uploadPhoto({
@@ -230,7 +241,11 @@ export async function submitProcurementBill(args: {
     p_purchase_order_id: args.purchaseOrderId,
     p_actual_supplier_id: args.actualSupplierId,
     p_bill_photo_url: billPhotoUrl,
-    p_item_prices: args.itemPrices,
+    p_item_prices: args.itemPrices.map((item) => ({
+      id: item.id,
+      price: item.price,
+      got_yards: item.gotYards,
+    })),
     p_additional_items: args.additionalItems.map((item) => ({
       item_type: item.itemType,
       color_id: item.colorId,

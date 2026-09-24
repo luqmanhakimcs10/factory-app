@@ -191,32 +191,13 @@ export type PoStatus =
   | 'awaitingProcurement'
   /** Priced by Procurement, bill attached, awaiting the store manager. */
   | 'submitted'
+  /** A system-generated PO that reached the supplier; confirmed like `submitted`. */
   | 'awaitingConfirmation'
+  /** Receipt confirmed; this is what credits stock lots (0018). */
   | 'confirmed'
+  /** Folded into `confirmed` by 0018 and never written again. Postgres cannot drop an enum label. */
   | 'received';
 export type PoSource = 'manual' | 'system_generated';
-export type SequinCut = 'Cut' | 'Flat' | 'Cup';
-
-export interface StockItem {
-  id: string;
-  factory_id: string;
-  type: StockType;
-  code: string;
-  label: string;
-  color_id: string | null;
-  custom_hex: string | null;
-  /** Thread and tilla. */
-  quantity_grams: number | null;
-  /** Sequin only. */
-  size_mm: number | null;
-  cut_type: SequinCut | null;
-  /** Sequin only, counted in "CDs". */
-  roll_count: number | null;
-  /** Derived from roll_count; never typed in. Null until the conversion table exists. */
-  piece_count: number | null;
-  low_stock_threshold: number | null;
-  created_at: string;
-}
 
 export interface Machine {
   id: string;
@@ -424,23 +405,6 @@ export const poStatusSchema = z.enum([
   'received',
 ]);
 export const poSourceSchema = z.enum(['manual', 'system_generated']);
-
-export const stockItemSchema = z.object({
-  id: uuid(),
-  factory_id: uuid(),
-  type: stockTypeSchema,
-  code: z.string(),
-  label: z.string(),
-  color_id: z.string().nullable(),
-  custom_hex: z.string().nullable(),
-  quantity_grams: z.number().nullable(),
-  size_mm: z.number().nullable(),
-  cut_type: z.enum(['Cut', 'Flat', 'Cup']).nullable(),
-  roll_count: z.number().nullable(),
-  piece_count: z.number().nullable(),
-  low_stock_threshold: z.number().nullable(),
-  created_at: z.string(),
-}) satisfies z.ZodType<StockItem>;
 
 export const machineJobSchema = z.object({
   order_id: uuid(),

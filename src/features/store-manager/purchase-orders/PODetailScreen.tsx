@@ -1,71 +1,61 @@
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Text } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
-import {
-  Button,
-  Card,
-  ColorSwatch,
-  EmptyState,
-  InfoRow,
-  PhotoTile,
-  SourceTag,
-  TopBar,
-} from '../../../components';
-import { colors, layout, radius, spacing, type } from '../../../theme';
+import { Button, Card, InfoRow, PhotoTile } from '../../../components';
+import { type } from '../../../theme';
 import { BUCKETS } from '../../../data/storage';
 import { useQuery } from '../../../data/useQuery';
 import { useSignedPhoto } from '../../../data/useSignedPhoto';
-import { formatRs } from '../../../lib/ledgerMath';
 import type { StoreManagerStackParamList } from '../../../navigation/StoreManagerStack';
+import { confirmPurchaseOrder } from '../../procurement/api';
 import {
-  confirmPurchaseOrder,
-  getProcurementPo,
-  lineQuantity,
-  linesTotal,
-  poLines,
-  type PoLine,
-} from '../../procurement/api';
+  TYPE_META,
+  fmt,
+  getPurchaseOrder,
+  isShortYards,
+  isoDay,
+  poBucket,
+  poItemType,
+  poTotal,
+  unitsLabel,
+} from '../api';
+import { DetailShell, ErrorCard, MaterialLine, Note, TotalCard } from '../components';
 
 type Props = NativeStackScreenProps<StoreManagerStackParamList, 'PODetail'>;
 
 /**
- * Review a submitted bill and confirm it.
+ * One purchase order in any of its three buckets.
  *
- * Built for `status = 'submitted'` only. The stub stays in place for
- * `awaitingProcurement` and `awaitingConfirmation`: those two are genuinely
- * undesigned, and a detail screen invented for them would bake in decisions
- * nobody has made. This one has a spec because there is now something concrete
- * to review — prices, a supplier, and a photograph of the bill.
- *
- * It reads through the Procurement module's own row helpers rather than a
- * second copy of them. The two screens are looking at the same `po_items` rows,
- * and a store manager confirming a total that differs from the one procurement
- * submitted — because one screen summed it differently — is the exact failure
- * that a shared reader prevents.
- *
- * Confirming is what puts the PO on the Accountant's Payables tab; that tab
- * already filters on `confirmed` and needed no change.
+ * Only the "Awaiting Confirmation" bucket has an action, and it is the one that
+ * matters: confirming receipt credits every line into a lot keyed by the
+ * supplier actually bought from (`confirm_purchase_order`, 0018). It is also
+ * what puts the PO on the Accountant's Payables tab.
  */
 export function PODetailScreen({ navigation, route }: Props) {
-  const insets = useSafeAreaInsets();
   const { purchaseOrderId } = route.params;
-
-  const fetcher = useCallback(() => getProcurementPo(purchaseOrderId), [purchaseOrderId]);
-  const { data, loading, error, refetch } = useQuery(fetcher);
+  const fetcher = useCallback(() => getPurchaseOrder(purchaseOrderId), [purchaseOrderId]);
+  const { data: po, loading, error } = useQuery(fetcher);
+  const billPhoto = useSignedPhoto(BUCKETS.billPhotos, po?.bill_photo_url ?? null);
 
   const [confirming, setConfirming] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
-  const billPhoto = useSignedPhoto(BUCKETS.billPhotos, data?.bill_photo_url ?? null);
+  if (!po) {
+    return <DetailShell title="Purchase Order" onBack={navigation.goBack} loading={loading} error={error} />;
+  }
+
+  const bucket = poBucket(po.status);
+  const supplier = po.actual_supplier?.name ?? po.supplier_name;
+  const recommend = po.po_items.find((i) => i.recommended_supplier)?.recommended_supplier?.name;
+  const anyShort = po.po_items.some(isShortYards);
+  const total = poTotal(po);
 
   const confirm = async () => {
     setConfirming(true);
     setFailure(null);
     try {
-      await confirmPurchaseOrder(purchaseOrderId);
-      refetch();
+      await confirmPurchaseOrder(po.id);
       navigation.goBack();
     } catch (caught) {
       setFailure(caught instanceof Error ? caught.message : String(caught));
@@ -74,198 +64,111 @@ export function PODetailScreen({ navigation, route }: Props) {
     }
   };
 
-  if (loading && !data) {
-    return (
-      <View style={styles.screen}>
-        <TopBar variant="bar" title="Purchase Order" onPressBack={navigation.goBack} />
-        <ActivityIndicator style={styles.loader} color={colors.primary} />
-      </View>
-    );
-  }
-
-  if (error || !data) {
-    return (
-      <View style={styles.screen}>
-        <TopBar variant="bar" title="Purchase Order" onPressBack={navigation.goBack} />
-        <EmptyState
-          icon="alert-triangle"
-          title="Could not load this purchase order"
-          hint={error?.message}
-        />
-      </View>
-    );
-  }
-
-  const lines = poLines(data);
-  const total = linesTotal(lines);
-  const confirmable = data.status === 'submitted';
-
   return (
-    <View style={styles.screen}>
-      <TopBar
-        variant="bar"
-        title="Purchase Order"
-        onPressBack={navigation.goBack}
-        trailing={data.po_number}
-      />
-
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.header}>
-          <Text style={type.title}>{data.po_number}</Text>
-          <SourceTag label={data.source === 'manual' ? 'MANUAL' : 'SYSTEM-GENERATED'} />
-        </View>
-
-        <Card title="Items">
-          {lines.map((line) => (
-            <ItemLine key={line.id} line={line} />
-          ))}
-        </Card>
-
-        <Card title="Bill">
+    <DetailShell
+      title={po.po_number}
+      trailing={po.source === 'manual' ? 'Manual' : 'System-Generated'}
+      onBack={navigation.goBack}
+      footer={
+        bucket === 'awaitingConfirmation' ? (
+          <Button
+            label="Confirm Receipt — adds stock"
+            icon="check"
+            flex
+            loading={confirming}
+            onPress={() => void confirm()}
+          />
+        ) : undefined
+      }
+    >
+      <Card>
+        <InfoRow
+          icon="truck"
+          label={supplier ?? recommend ?? 'No supplier yet'}
+          subLabel={supplier ? 'Supplier actually bought from' : 'Recommended by you — procurement decides'}
+          divider
+        />
+        {po.submitted_at ? (
           <InfoRow
-            icon="truck"
-            label="Actual Supplier"
-            trailing={data.actual_supplier?.name ?? 'Not recorded'}
+            icon="user"
+            label={`Fulfilled by ${po.submitter?.full_name ?? 'Procurement'} (Procurement)`}
+            subLabel={`${isoDay(po.submitted_at)} · bill photographed`}
             divider
           />
-          <InfoRow icon="dollar-sign" label="Total" trailing={formatRs(total)} divider />
+        ) : null}
+        <InfoRow
+          icon="calendar"
+          label={`Raised ${isoDay(po.date)}`}
+          subLabel={`${po.po_items.length} item${po.po_items.length === 1 ? '' : 's'}`}
+        />
+      </Card>
 
-          {data.bill_photo_url ? (
-            <PhotoTile
-              shape="wide"
-              height={200}
-              photoUri={billPhoto}
-              variant="disabled"
-              label="Bill photo"
-              onCapture={() => {}}
+      {anyShort ? (
+        <Note tone="warn" text="A line came in short on yards per unit. The unit count matches; the length does not." />
+      ) : null}
+
+      <Card title={bucket === 'awaitingProcurement' ? 'Items requested' : 'Items received'}>
+        {po.po_items.map((item) => {
+          const itemType = poItemType(item);
+          const meta = TYPE_META[itemType];
+          const short = isShortYards(item);
+          const sub = item.is_additional
+            ? 'Added by Procurement'
+            : meta.hasYards
+              ? `Asked ${fmt(item.ask_yards ?? 0)} yd${item.got_yards !== null ? ` · Got ${fmt(item.got_yards)} yd` : ''}`
+              : 'No length measure';
+          return (
+            <MaterialLine
+              key={item.id}
+              code={item.stock_items?.code ?? 'NEW'}
+              title={unitsLabel(itemType, item.qty)}
+              sub={sub}
+              value={item.price ? `Rs. ${fmt(item.price)}` : '—'}
+              status={
+                short
+                  ? `Short ${fmt((item.ask_yards ?? 0) - (item.got_yards ?? 0))} yd/${meta.unit}`
+                  : item.is_additional
+                    ? 'Extra'
+                    : bucket === 'awaitingProcurement'
+                      ? 'Requested'
+                      : 'Full'
+              }
+              statusTone={short ? 'warn' : 'good'}
             />
-          ) : (
-            <Text style={type.label}>No bill photo on this purchase order.</Text>
-          )}
-        </Card>
+          );
+        })}
+      </Card>
 
-        {failure ? (
-          <Card tone="danger">
-            <Text style={[type.bodyStrong, styles.errorTitle]}>Could not confirm</Text>
-            <Text style={type.body}>{failure}</Text>
-          </Card>
-        ) : null}
-      </ScrollView>
+      {total ? <TotalCard label="Bill total" value={`Rs. ${fmt(total)}`} /> : null}
 
-      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, spacing.content) }]}>
-        <Button
-          label={confirmable ? 'Confirm Purchase Order' : 'Already Confirmed'}
-          icon="check"
-          flex
-          disabled={!confirmable}
-          loading={confirming}
-          onPress={() => void confirm()}
+      {po.bill_photo_url ? (
+        <PhotoTile
+          shape="wide"
+          height={200}
+          photoUri={billPhoto}
+          variant="disabled"
+          label="Bill photo"
+          onCapture={() => {}}
         />
-      </View>
-    </View>
+      ) : null}
+
+      {bucket === 'confirmed' ? (
+        <Note
+          tone="good"
+          text={`Confirmed ${isoDay(po.confirmed_at)}. Each line created or added to a lot keyed by ${supplier ?? 'the supplier'}, carrying its invoiced price and actual unit length.`}
+        />
+      ) : null}
+      {bucket === 'awaitingProcurement' ? (
+        <Note
+          tone="plain"
+          text="Waiting on procurement to buy and upload the bill. Your supplier pick is a suggestion, not a decision."
+        />
+      ) : null}
+      {bucket === 'awaitingConfirmation' ? (
+        <Text style={type.caption}>Stock only moves when you confirm receipt.</Text>
+      ) : null}
+
+      {failure ? <ErrorCard title="Could not confirm" message={failure} /> : null}
+    </DetailShell>
   );
 }
-
-/**
- * One line. An additional item wears the same amber label it wore on Fulfill —
- * the store manager is confirming a bill that includes things they never asked
- * for, and that distinction has to survive the handoff.
- */
-function ItemLine({ line }: { line: PoLine }) {
-  return (
-    <View style={styles.row}>
-      {line.colorId ? (
-        <ColorSwatch colorId={line.colorId} customHex={line.hex} size={24} interactive={false} />
-      ) : (
-        <View
-          style={[
-            styles.plainSwatch,
-            { backgroundColor: line.hex ?? colors.borderSubtle },
-            !line.hex && styles.plainSwatchEmpty,
-          ]}
-        />
-      )}
-
-      <View style={styles.rowText}>
-        {line.isAdditional ? (
-          <View style={styles.addedTag}>
-            <Text style={[type.pill, styles.addedTagLabel]}>Added by Procurement</Text>
-          </View>
-        ) : null}
-        <Text style={type.body} numberOfLines={1}>
-          {line.label}
-        </Text>
-        <Text style={type.caption}>{lineQuantity(line)}</Text>
-      </View>
-
-      <Text style={[type.code, styles.price]}>
-        {line.price === null ? '—' : formatRs(line.price)}
-      </Text>
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-  content: {
-    padding: spacing.content,
-    gap: spacing.block,
-  },
-  loader: {
-    marginTop: spacing.content * 3,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.tight,
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.tight + 2,
-    paddingVertical: spacing.tight,
-    borderBottomWidth: layout.hairline,
-    borderBottomColor: colors.borderSubtle,
-  },
-  plainSwatch: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-  },
-  plainSwatchEmpty: {
-    borderWidth: layout.hairline,
-    borderColor: colors.border,
-  },
-  rowText: {
-    flex: 1,
-    gap: 2,
-  },
-  addedTag: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-    backgroundColor: colors.warningBg,
-  },
-  addedTagLabel: {
-    color: colors.warning,
-  },
-  price: {
-    fontSize: 15,
-    color: colors.textPrimary,
-  },
-  errorTitle: {
-    color: colors.danger,
-  },
-  footer: {
-    flexDirection: 'row',
-    paddingHorizontal: spacing.content,
-    paddingTop: spacing.tight + 2,
-    backgroundColor: colors.surface,
-    borderTopWidth: layout.hairline,
-    borderTopColor: colors.border,
-  },
-});

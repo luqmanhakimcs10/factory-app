@@ -26,6 +26,11 @@ interface FulfillDraft {
   purchaseOrderId: string | null;
   /** Price per requested `po_items.id`. Absent means untouched, not zero. */
   prices: Record<string, number>;
+  /**
+   * Yards per unit actually bought, per requested line (thread / sequin).
+   * Absent means "as asked" — confirmation falls back to `ask_yards`.
+   */
+  yards: Record<string, number>;
   supplierId: string | null;
   photoUri: string | null;
   additional: AdditionalDraft[];
@@ -35,6 +40,7 @@ interface DraftState extends FulfillDraft {
   /** Start (or resume) the draft for one PO. A different id resets. */
   open: (purchaseOrderId: string) => void;
   setPrice: (itemId: string, price: number) => void;
+  setYards: (itemId: string, yards: number) => void;
   setSupplier: (supplierId: string) => void;
   setPhoto: (uri: string) => void;
   addAdditional: (item: AdditionalItemInput) => void;
@@ -45,6 +51,7 @@ interface DraftState extends FulfillDraft {
 const EMPTY: FulfillDraft = {
   purchaseOrderId: null,
   prices: {},
+  yards: {},
   supplierId: null,
   photoUri: null,
   additional: [],
@@ -66,6 +73,9 @@ export const useFulfillDraft = create<DraftState>((set) => ({
 
   setPrice: (itemId, price) =>
     set((state) => ({ prices: { ...state.prices, [itemId]: price } })),
+
+  setYards: (itemId, yards) =>
+    set((state) => ({ yards: { ...state.yards, [itemId]: yards } })),
 
   setSupplier: (supplierId) => set({ supplierId }),
   setPhoto: (uri) => set({ photoUri: uri }),

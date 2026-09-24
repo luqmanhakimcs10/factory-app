@@ -14,9 +14,12 @@ import {
   INVENTORY_TYPE_LABELS,
   PAYMENT_CYCLES,
   PAYMENT_CYCLE_LABELS,
+  SUPPLIER_KINDS,
+  SUPPLIER_KIND_LABELS,
   saveSupplier,
   type PaymentCycle,
   type RosterStatus,
+  type SupplierKind,
 } from '../rosters';
 
 type Props = NativeStackScreenProps<CompanyAdminStackParamList, 'SupplierForm'>;
@@ -24,6 +27,11 @@ type Props = NativeStackScreenProps<CompanyAdminStackParamList, 'SupplierForm'>;
 const TYPE_OPTIONS = INVENTORY_TYPES.map((entry) => ({
   value: entry,
   label: INVENTORY_TYPE_LABELS[entry],
+}));
+
+const KIND_OPTIONS = SUPPLIER_KINDS.map((entry) => ({
+  value: entry,
+  label: SUPPLIER_KIND_LABELS[entry],
 }));
 
 const CYCLE_OPTIONS = PAYMENT_CYCLES.map((entry) => ({
@@ -54,6 +62,8 @@ export function SupplierFormScreen({ navigation, route }: Props) {
     existing?.inventory_type ?? null,
   );
   const [cycle, setCycle] = useState<PaymentCycle | null>(existing?.payment_cycle ?? null);
+  // A factory is a counterparty stock is exchanged with rather than bought from.
+  const [kind, setKind] = useState<SupplierKind>(existing?.kind ?? 'supplier');
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,6 +86,7 @@ export function SupplierFormScreen({ navigation, route }: Props) {
           inventoryType,
           paymentCycle: cycle,
           status,
+          kind,
         },
       });
       navigation.goBack();
@@ -126,6 +137,13 @@ export function SupplierFormScreen({ navigation, route }: Props) {
         placeholder="Shop / street / area / city"
         onChangeText={setAddress}
         multiline
+      />
+
+      <ChipField
+        label="Kind"
+        options={KIND_OPTIONS}
+        selected={kind}
+        onSelect={setKind}
       />
 
       <ChipField

@@ -450,6 +450,18 @@ export async function saveFinishingPartner(args: {
 
 // --- Suppliers --------------------------------------------------------------
 
+/**
+ * A supplier row is any party stock can come from: a shop the factory buys
+ * from, or another factory it swaps goods with (0018). One roster, so a lot's
+ * party and a purchase order's supplier are always the same kind of row.
+ */
+export const SUPPLIER_KINDS = ['supplier', 'factory'] as const;
+export type SupplierKind = (typeof SUPPLIER_KINDS)[number];
+export const SUPPLIER_KIND_LABELS: Record<SupplierKind, string> = {
+  supplier: 'Supplier',
+  factory: 'Factory',
+};
+
 const supplierSchema = z.object({
   id: uuid(),
   name: z.string(),
@@ -458,12 +470,13 @@ const supplierSchema = z.object({
   inventory_type: z.enum(INVENTORY_TYPES),
   payment_cycle: z.enum(PAYMENT_CYCLES),
   status: rosterStatusSchema,
+  kind: z.enum(SUPPLIER_KINDS),
 });
 
 export type Supplier = z.infer<typeof supplierSchema>;
 
 const SUPPLIER_SELECT =
-  'id, name, contact, address, inventory_type, payment_cycle, status';
+  'id, name, contact, address, inventory_type, payment_cycle, status, kind';
 
 export async function listSuppliers(factoryId: string): Promise<Supplier[]> {
   const { data, error } = await supabase
@@ -483,6 +496,7 @@ export interface SupplierInput {
   inventoryType: StockType;
   paymentCycle: PaymentCycle;
   status: RosterStatus;
+  kind: SupplierKind;
 }
 
 export async function saveSupplier(args: {
@@ -500,6 +514,7 @@ export async function saveSupplier(args: {
     inventory_type: input.inventoryType,
     payment_cycle: input.paymentCycle,
     status: input.status,
+    kind: input.kind,
   };
 
   const { error } = id
